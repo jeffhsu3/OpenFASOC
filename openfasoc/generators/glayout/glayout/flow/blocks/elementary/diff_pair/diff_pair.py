@@ -99,7 +99,8 @@ def diff_pair(
 	plus_minus_seperation: float = 0,
 	rmult: int = 1,
 	dummy: Union[bool, tuple[bool, bool]] = True,
-	substrate_tap: bool=True
+	substrate_tap: bool=True,
+	inter_finger_topmet: str = "met2"
 ) -> Component:
 	"""create a diffpair with 2 transistors placed in two rows with common centroid place. Sources are shorted
 	width = width of the transistors
@@ -117,13 +118,13 @@ def diff_pair(
 	if isinstance(dummy, bool):
 		dummy = (dummy, dummy)
 	if n_or_p_fet:
-		fetL = nmos(pdk, width=width, fingers=fingers,length=length,multipliers=1,with_tie=False,with_dummy=(dummy[0], False),with_dnwell=False,with_substrate_tap=False,rmult=rmult)
-		fetR = nmos(pdk, width=width, fingers=fingers,length=length,multipliers=1,with_tie=False,with_dummy=(False,dummy[1]),with_dnwell=False,with_substrate_tap=False,rmult=rmult)
+		fetL = nmos(pdk, width=width, fingers=fingers,length=length,multipliers=1,with_tie=False,with_dummy=(dummy[0], False),with_dnwell=False,with_substrate_tap=False,rmult=rmult,inter_finger_topmet=inter_finger_topmet)
+		fetR = nmos(pdk, width=width, fingers=fingers,length=length,multipliers=1,with_tie=False,with_dummy=(False,dummy[1]),with_dnwell=False,with_substrate_tap=False,rmult=rmult,inter_finger_topmet=inter_finger_topmet)
 		min_spacing_x = pdk.get_grule("n+s/d")["min_separation"] - 2*(fetL.xmax - fetL.ports["multiplier_0_plusdoped_E"].center[0])
 		well = "pwell"
 	else:
-		fetL = pmos(pdk, width=width, fingers=fingers,length=length,multipliers=1,with_tie=False,with_dummy=(dummy[0], False),dnwell=False,with_substrate_tap=False,rmult=rmult)
-		fetR = pmos(pdk, width=width, fingers=fingers,length=length,multipliers=1,with_tie=False,with_dummy=(False,dummy[1]),dnwell=False,with_substrate_tap=False,rmult=rmult)
+		fetL = pmos(pdk, width=width, fingers=fingers,length=length,multipliers=1,with_tie=False,with_dummy=(dummy[0], False),dnwell=False,with_substrate_tap=False,rmult=rmult,inter_finger_topmet=inter_finger_topmet)
+		fetR = pmos(pdk, width=width, fingers=fingers,length=length,multipliers=1,with_tie=False,with_dummy=(False,dummy[1]),dnwell=False,with_substrate_tap=False,rmult=rmult,inter_finger_topmet=inter_finger_topmet)
 		min_spacing_x = pdk.get_grule("p+s/d")["min_separation"] - 2*(fetL.xmax - fetL.ports["multiplier_0_plusdoped_E"].center[0])
 		well = "nwell"
 	# place transistors

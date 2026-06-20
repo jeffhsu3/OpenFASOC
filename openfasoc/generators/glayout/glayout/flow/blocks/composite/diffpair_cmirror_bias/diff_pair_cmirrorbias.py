@@ -80,6 +80,7 @@ def diff_pair_ibias(
     diffpair_bias: tuple[float, float, int],
     rmult: int,
     with_antenna_diode_on_diffinputs: int,
+    inter_finger_topmet: str = "met2",
 ) -> Component:
     # create and center diffpair
     diffpair_i_ = Component("temp diffpair and current source")
@@ -89,6 +90,7 @@ def diff_pair_ibias(
         length=half_diffpair_params[1],
         fingers=half_diffpair_params[2],
         rmult=rmult,
+        inter_finger_topmet=inter_finger_topmet,
     )
     # add antenna diodes if that option was specified
     diffpair_centered_ref = prec_ref_center(center_diffpair_comp)
@@ -155,6 +157,7 @@ def diff_pair_ibias(
         with_substrate_tap=False,
         gate_route_topmet="met3",
         sd_route_topmet="met3",
+        inter_finger_topmet=inter_finger_topmet,
         rmult=rmult,
         tie_layers=("met2", "met2"),
     )

@@ -23,6 +23,7 @@ def resistor(
     multipliers: int = 1,
     substrate_tap_layers: tuple[str, str] = ("met2", "met1"),
     tie_layers: tuple[str, str] = ("met2", "met1"),
+    inter_finger_topmet: str = "met2",
 ) -> Component:
     """This cell represents a diode connected pfet which acts as a programmable resistor. The small signal resistance is modelled by (1/gm)||r_0, where gm is the fet's transconductance and r0 is the small signal output impedance. The cell can be instantiated with any choice of width and length. The number of resistors connected in series can be controlled using numseries (**note: they will be placed in a single line, so area saving has to be manually handled). The number of resistors in parallel connnection can be controlled using multipliers. 
     Note that parallel and series resistors can be used simultaneously, but the parallel-ness will be applied to all resistors in series. The cell can be used and routed separately should a more complex combination of resistances be required
@@ -46,7 +47,7 @@ def resistor(
     toplvl = Component()
     max_sep = pdk.util_max_metal_seperation()
     if num_series == 1:
-        pfet_reference = toplvl << pmos(pdk, width=width, length=length, with_substrate_tap=with_substrate_tap, with_tie=with_tie, dnwell=with_dnwell, rmult=rmult, multipliers=multipliers, substrate_tap_layers=substrate_tap_layers, tie_layers=tie_layers, with_dummy=False)
+        pfet_reference = toplvl << pmos(pdk, width=width, length=length, with_substrate_tap=with_substrate_tap, with_tie=with_tie, dnwell=with_dnwell, rmult=rmult, multipliers=multipliers, substrate_tap_layers=substrate_tap_layers, tie_layers=tie_layers, with_dummy=False, inter_finger_topmet=inter_finger_topmet)
         toplvl.add_ports(pfet_reference.ports, prefix='pfet_')
         
         # short gate and drain 
@@ -55,14 +56,14 @@ def resistor(
     else:
         pfet_references = []
         diode_connect_references = []
-        pfet_reference_0 = toplvl << pmos(pdk, width=width, length=length, with_substrate_tap=False, with_tie=False, dnwell=False, rmult=rmult, multipliers=multipliers, substrate_tap_layers=substrate_tap_layers, tie_layers=tie_layers, with_dummy=False)
+        pfet_reference_0 = toplvl << pmos(pdk, width=width, length=length, with_substrate_tap=False, with_tie=False, dnwell=False, rmult=rmult, multipliers=multipliers, substrate_tap_layers=substrate_tap_layers, tie_layers=tie_layers, with_dummy=False, inter_finger_topmet=inter_finger_topmet)
         diode_connect_0 = toplvl << c_route(pdk, pfet_reference_0.ports['multiplier_0_gate_W'], pfet_reference_0.ports['multiplier_0_drain_W'])
         diode_connect_references.append(diode_connect_0)
         
         toplvl.add_ports(pfet_reference_0.ports, prefix='pfet_0_')
         pfet_references.append(pfet_reference_0)
         for i in range(1, num_series):
-            pfet_reference = (toplvl << pmos(pdk, width=width, length=length, with_substrate_tap=False, with_tie=False, dnwell=False, rmult=rmult,multipliers=multipliers, substrate_tap_layers=substrate_tap_layers, tie_layers=tie_layers, with_dummy=False)).movey(i * (evaluate_bbox(pfet_reference_0)[1] + max_sep))
+            pfet_reference = (toplvl << pmos(pdk, width=width, length=length, with_substrate_tap=False, with_tie=False, dnwell=False, rmult=rmult,multipliers=multipliers, substrate_tap_layers=substrate_tap_layers, tie_layers=tie_layers, with_dummy=False, inter_finger_topmet=inter_finger_topmet)).movey(i * (evaluate_bbox(pfet_reference_0)[1] + max_sep))
             
             pfet_references.append(pfet_reference)
             if i < num_series - 1:
