@@ -1,0 +1,63 @@
+[project]
+name = "OpenFASoC"
+version = "0.0.1"
+description = "Fully Open-Source Autonomous SoC Synthesis using Customizable Cell-Based Synthesizable Analog Circuits"
+readme = "README.rst"
+authors = [
+  { name = "msaligane", email = "mehdi@umich.edu" }
+]
+license = { text = "MIT" }
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.10",
+]
+dependencies = [
+    "pandas",
+    "klayout",
+    "numpy",
+    "matplotlib",
+    "gdsfactory==7.7.0",
+    "nbsphinx",
+    "cairosvg",
+    "scipy",
+    "ltspice",
+    "mako",
+    "prettyprinttree",
+    "scikit-learn",
+    "seaborn"
+]
+
+[dependency-groups]
+dev = [
+    "doc8",
+    "docutils",
+    "flake8",
+    "furo",
+    "ipykernel",
+    "mypy",
+    "myst-parser",
+    "nbsphinx",
+    "nbval",
+    "pre-commit",
+    "pur",
+    "pydocstyle",
+    "pytest-cov",
+    "recommonmark",
+    "sphinx",
+    "sphinx-autodoc-typehints",
+    "sphinx-click",
+    "sphinx-markdown-tables",
+    "sphinx-rtd-theme",
+    "tox",
+    "xdoctest"
+]
+
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+exclude = ["tests"]
