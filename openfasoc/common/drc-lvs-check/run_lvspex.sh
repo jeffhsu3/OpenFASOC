@@ -36,6 +36,11 @@ EOF
 
 magic -rcfile $COMMON_VERIF_DIR/sky130A/sky130A.magicrc -noconsole -dnull < magic.script
 
+# Fix special FET names in sim file for ngspice compatibility
+sed -i 's/sky130_fd_pr__special_nfet_01v8/sky130_fd_pr__nfet_01v8/g' $OBJECTS_DIR/netgen_lvs/spice/$2_sim.spice
+sed -i 's/sky130_fd_pr__special_pfet_01v8/sky130_fd_pr__pfet_01v8/g' $OBJECTS_DIR/netgen_lvs/spice/$2_sim.spice
+
+
 # Adapt the extracted spice file to account for errors in Magic
 # Importantly, this script is specific in what it looks for,
 # so is unlikely to break LVS if Magic improves in the future
