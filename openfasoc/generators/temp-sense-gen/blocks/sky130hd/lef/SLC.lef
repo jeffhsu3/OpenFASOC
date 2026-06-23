@@ -83,8 +83,7 @@ MACRO SLC
     USE GROUND ;
     PORT
       LAYER li1 ;
-        RECT 12.505 0.265 12.795 0.81 ;
-        RECT 0.545 0.265 0.835 0.81 ;
+        RECT 0 0.265 13.34 0.81 ;
     END
   END VNB
   PIN VOUT
@@ -103,8 +102,7 @@ MACRO SLC
     USE POWER ;
     PORT
       LAYER li1 ;
-        RECT 12.505 1.47 12.795 2.455 ;
-        RECT 0.545 1.47 0.835 2.455 ;
+        RECT 0 1.47 13.34 2.455 ;
     END
   END VPB
   PIN VPWR

@@ -23,10 +23,14 @@ proc customPlace_east {block_object cell_name row_num isfixed} {
 			set row_orient [$target_row getOrient]
 			if {$row_orient eq "R0"} {
 				# if row orientation is R0 (VDD above row, GND below)
-				place_cell -cell $cell_name -inst_name [$inst getName] -origin [list 82.8 $y_initial_row] -orient R0 -status $status
+				$inst setOrient R0
+				$inst setLocation [expr {int(82.8 * 1000)}] [expr {int($y_initial_row * 1000)}]
+				$inst setPlacementStatus $status
 			} elseif {$row_orient eq "MX"} {
 				# if row orientation is MX (VDD below row, GND above)
-				place_cell -cell $cell_name -inst_name [$inst getName] -origin [list 82.8 [expr $y_initial_row + $row_ydim]] -orient MX -status $status
+				$inst setOrient MX
+				$inst setLocation [expr {int(82.8 * 1000)}] [expr {int(($y_initial_row + $row_ydim) * 1000)}]
+				$inst setPlacementStatus $status
 			}
 
 			incr row_num
