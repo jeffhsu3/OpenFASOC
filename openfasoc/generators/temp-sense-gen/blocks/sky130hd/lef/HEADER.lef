@@ -24,8 +24,7 @@ MACRO HEADER
     SHAPE ABUTMENT ;
     PORT
       LAYER li1 ;
-        RECT 11.585 0.265 11.875 0.81 ;
-        RECT 0.545 0.265 0.835 0.81 ;
+        RECT 0 0.265 12.42 0.81 ;
     END
   END VNB
   PIN VGND

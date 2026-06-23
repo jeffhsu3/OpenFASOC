@@ -107,7 +107,9 @@ gf180_mapped_pdk = MappedPDK(
 	models={
         'nfet': 'nfet_03v3',
 		'pfet': 'pfet_03v3',
-		'mimcap': 'mimcap_1p0fF'
+		# gf180 m4m5 MiM is what magic extracts (cap_mim_2f0_m4m5_noshield, 2.0 fF/um^2);
+		# the old 'mimcap_1p0fF' name+density never matched LVS extraction.
+		'mimcap': 'cap_mim_2f0_m4m5_noshield'
     },
     layers=LAYER,
     pdk_files=pdk_files,

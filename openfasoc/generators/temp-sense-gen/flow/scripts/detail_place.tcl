@@ -8,6 +8,16 @@ set_placement_padding -global \
     -left $::env(CELL_PAD_IN_SITES_DETAIL_PLACEMENT) \
     -right $::env(CELL_PAD_IN_SITES_DETAIL_PLACEMENT)
 
+set db [ord::get_db]
+foreach lib [$db getLibs] {
+  foreach master [$lib getMasters] {
+    set mname [$master getName]
+    if {[string match "*decap*" $mname] || [string match "*tap*" $mname]} {
+      set_placement_padding -masters $mname -left 0 -right 0
+    }
+  }
+}
+
 # place header cells in the right, starting from row 1 upward (not randomly)
 source $::env(SCRIPTS_DIR)/openfasoc/custom_place.tcl
 customPlace_east [ord::get_db_block] "HEADER" 1 no
