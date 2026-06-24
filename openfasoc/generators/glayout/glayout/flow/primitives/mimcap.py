@@ -70,6 +70,7 @@ def mimcap(
     # create top component
     mim_cap = Component()
     mim_cap << rectangle(size=size, layer=pdk.get_glayer("capmet"), centered=True)
+    mim_cap << rectangle(size=size, layer=(75, 0), centered=True)
     top_met_ref = mim_cap << via_array(
         pdk, capmetbottom, capmettop, size=size, minus1=True, lay_bottom=False
     )

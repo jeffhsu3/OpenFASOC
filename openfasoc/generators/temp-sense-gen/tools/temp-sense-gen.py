@@ -75,7 +75,7 @@ else:
     try:
     	p = sp.Popen(
             [
-                "sed -i 's/set PDKPATH \".*/set PDKPATH $env(PDK_ROOT)\/sky130A/' $PDK_ROOT/sky130A/libs.tech/magic/sky130A.magicrc"
+                r"sed -i 's/set PDKPATH \".*/set PDKPATH $env(PDK_ROOT)\/sky130A/' $PDK_ROOT/sky130A/libs.tech/magic/sky130A.magicrc"
             ],
             shell=True,
         ).wait()
@@ -123,7 +123,7 @@ generate_verilog(
 
 with open(os.path.join(verilog_gen_dir, "TEMP_ANALOG_hv.v"), "r") as rf:
     filedata = rf.read()
-header_list = re.findall("HEADER\s+(\w+)\(", filedata)
+header_list = re.findall(r"HEADER\s+(\w+)\(", filedata)
 
 with open(genDir + "blocks/sky130hd/tempsenseInst_custom_net.txt", "w") as wf:
     wf.write("r_VIN\n")
@@ -132,7 +132,7 @@ with open(genDir + "blocks/sky130hd/tempsenseInst_custom_net.txt", "w") as wf:
 
 with open(os.path.join(verilog_gen_dir, "TEMP_ANALOG_lv.v"), "r") as rf:
     filedata = rf.read()
-lv_list = re.findall("\nsky130_fd_sc\w*\s+(\w+)\s+\(", filedata)
+lv_list = re.findall(r"\nsky130_fd_sc\w*\s+(\w+)\s+\(", filedata)
 
 with open(genDir + "blocks/sky130hd/tempsenseInst_domain_insts.txt", "w") as wf:
     for lv_cell in lv_list:
@@ -141,7 +141,7 @@ with open(genDir + "blocks/sky130hd/tempsenseInst_domain_insts.txt", "w") as wf:
 with open(flowDir + "design/sky130hd/tempsense/config.mk", "r") as rf:
     filedata = rf.read()
     filedata = re.sub(
-        "export DESIGN_NAME\s*=\s*(\w+)", "export DESIGN_NAME = " + designName, filedata
+        r"export DESIGN_NAME\s*=\s*(\w+)", "export DESIGN_NAME = " + designName, filedata
     )
 with open(flowDir + "design/sky130hd/tempsense/config.mk", "w") as wf:
     wf.write(filedata)
@@ -198,10 +198,12 @@ if os.path.isdir(args.outputDir):
     # shutil.rmtree(genDir + args.outputDir)
     pass
 if not args.outputDir.startswith("/"):
-    os.mkdir(genDir + args.outputDir)
+    if not os.path.exists(genDir + args.outputDir):
+        os.mkdir(genDir + args.outputDir)
     outputDir = genDir + args.outputDir
 else:
-    os.mkdir(args.outputDir)
+    if not os.path.exists(args.outputDir):
+        os.mkdir(args.outputDir)
     outputDir = args.outputDir
 
 shutil.copyfile(
