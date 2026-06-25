@@ -89,7 +89,7 @@ def fet_netlist(
     mtop = fingers * multipliers
     dmtop = multipliers
     
-    source_netlist=""".subckt {circuit_name} {nodes} """+f'l={ltop} w={wtop} m={mtop} dm={dmtop} '+"""
+    source_netlist=""".subckt {circuit_name} {nodes} """+f'l={ltop}u w={wtop}u m={mtop} dm={dmtop} '+"""
 XMAIN   D G S B {model} l={{l}} w={{w}} m={{m}}"""
 
     for i in range(num_dummies):
@@ -101,12 +101,18 @@ XMAIN   D G S B {model} l={{l}} w={{w}} m={{m}}"""
         circuit_name=circuit_name,
         nodes=['D', 'G', 'S', 'B'],
         source_netlist=source_netlist,
-        instance_format="X{name} {nodes} {circuit_name} l={length} w={width} m={mult} dm={dummy_mult}",
+        instance_format="X{name} {nodes} {circuit_name} l={length}u w={width}u m={mult} dm={dummy_mult}",
         parameters={
             'model': model,
             'length': ltop,
             'width': wtop,
-            'mult': mtop / 2,
+            # Subckt instance multiplicity. The full parallel device count
+            # (fingers * multipliers) is already carried by XMAIN's m default
+            # inside the subckt, and netgen/ngspice treat the instance `m` as a
+            # multiplier ON TOP of that. So this must be 1 - otherwise the device
+            # is double-counted (the old mtop/2 only happened to give 1 for the
+            # 2-finger case and over-counted for any other finger count).
+            'mult': 1,
             'dummy_mult': dmtop
         }
     )
@@ -192,7 +198,7 @@ def multiplier(
         sd_N_port = multiplier.ports["leftsd_top_met_N"]
         sdvia = via_stack(pdk, "met1", sd_route_topmet)
         sdmet_hieght = sd_rmult*evaluate_bbox(sdvia)[1]
-        sdroute_minsep = pdk.get_grule(sd_route_topmet)["min_separation"]
+        sdroute_minsep = pdk.snap_to_2xgrid(pdk.get_grule(sd_route_topmet)["min_separation"] + 0.02)
         sdvia_ports = list()
         for finger in range(fingers+1):
             diff_top_port = movey(sd_N_port,destination=width/2)
@@ -209,7 +215,7 @@ def multiplier(
             sd_N_port = multiplier.ports[f"row0_col{finger}_rightsd_top_met_N"]
             # route gates
             gate_S_port = multiplier.ports[f"row0_col{finger}_gate_S"]
-            metal_seperation = pdk.util_max_metal_seperation()
+            metal_seperation = pdk.util_max_metal_seperation() + 0.02
             psuedo_Ngateroute = movey(gate_S_port.copy(),0-metal_seperation-gate_route_extension)
             psuedo_Ngateroute.y = pdk.snap_to_2xgrid(psuedo_Ngateroute.y)
             multiplier << straight_route(pdk,gate_S_port,psuedo_Ngateroute)
@@ -433,7 +439,7 @@ def nmos(
             pdk.util_max_metal_seperation(),
             pdk.get_grule("active_diff", "active_tap")["min_separation"],
         )
-        tap_separation += pdk.get_grule("p+s/d", "active_tap")["min_enclosure"]
+        tap_separation += pdk.get_grule("p+s/d", "active_tap")["min_enclosure"] + 0.02
         tap_encloses = (
             2 * (tap_separation + nfet.xmax),
             2 * (tap_separation + nfet.ymax),
@@ -581,7 +587,7 @@ def pmos(
             pdk.get_grule("met1")["min_separation"],
             pdk.get_grule("active_diff", "active_tap")["min_separation"],
         )
-        tap_separation += pdk.get_grule("n+s/d", "active_tap")["min_enclosure"]
+        tap_separation += pdk.get_grule("n+s/d", "active_tap")["min_enclosure"] + 0.02
         tap_encloses = (
             2 * (tap_separation + pfet.xmax),
             2 * (tap_separation + pfet.ymax),

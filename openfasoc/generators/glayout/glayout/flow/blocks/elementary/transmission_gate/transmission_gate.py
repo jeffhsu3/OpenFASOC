@@ -94,6 +94,14 @@ def  transmission_gate(
     #top level component
     top_level = Component(name="transmission_gate")
 
+    # Route the inter-finger source/drain via columns on met1 so they do not
+    # sit directly under the met2 source/drain route straps. On gf180 the met2
+    # columns (inter_finger_topmet="met2", the multiplier default) end up only
+    # ~0.25um below the met2 strap, violating the met2 spacing rule (M2.2a,
+    # 0.28um). Routing them on met1 removes the met2-met2 conflict while keeping
+    # source/drain connectivity through the met1->met2 route vias.
+    kwargs.setdefault("inter_finger_topmet", "met1")
+
     #two fets
     nfet = nmos(pdk, width=width[0], fingers=fingers[0], multipliers=multipliers[0], with_dummy=True, with_dnwell=False,  with_substrate_tap=False, length=length[0], **kwargs)
     pfet = pmos(pdk, width=width[1], fingers=fingers[1], multipliers=multipliers[1], with_dummy=True, with_substrate_tap=False, length=length[1], **kwargs)
@@ -102,10 +110,15 @@ def  transmission_gate(
     pfet_ref = rename_ports_by_orientation(pfet_ref.mirror_y())
 
     #Relative move
-    pfet_ref.movey(nfet_ref.ymax + evaluate_bbox(pfet_ref)[1]/2 + pdk.util_max_metal_seperation())
+    pfet_ref.movey(nfet_ref.ymax + evaluate_bbox(pfet_ref)[1]/2 + pdk.util_max_metal_seperation() + 0.02)
     
     #Routing
-    top_level << c_route(pdk, nfet_ref.ports["multiplier_0_source_E"], pfet_ref.ports["multiplier_0_source_E"])
+    # With stacked multipliers (multipliers>1) the per-FET gate trunk crowds the
+    # East inter-FET source trunk on met3 (M3.2a spacing < 0.30um); extend the
+    # source c-route East so its full-height trunk clears the gate trunk. The
+    # single-multiplier default (extension 0.5) is unchanged and stays clean.
+    src_extension = 1.0 if max(multipliers) > 1 else 0.5
+    top_level << c_route(pdk, nfet_ref.ports["multiplier_0_source_E"], pfet_ref.ports["multiplier_0_source_E"], extension=src_extension)
     top_level << c_route(pdk, nfet_ref.ports["multiplier_0_drain_W"], pfet_ref.ports["multiplier_0_drain_W"], viaoffset=False)
     
     #Renaming Ports
@@ -114,7 +127,7 @@ def  transmission_gate(
 
     #substrate tap
     if substrate_tap:
-            substrate_tap_encloses =((evaluate_bbox(top_level)[0]+pdk.util_max_metal_seperation()), (evaluate_bbox(top_level)[1]+pdk.util_max_metal_seperation()))
+            substrate_tap_encloses =((evaluate_bbox(top_level)[0]+pdk.util_max_metal_seperation() + 0.02), (evaluate_bbox(top_level)[1]+pdk.util_max_metal_seperation() + 0.02))
             guardring_ref = top_level << tapring(
             pdk,
             enclosed_rectangle=substrate_tap_encloses,
@@ -122,7 +135,7 @@ def  transmission_gate(
             horizontal_glayer='met2',
             vertical_glayer='met1',
         )
-            guardring_ref.move(nfet_ref.center).movey(evaluate_bbox(pfet_ref)[1]/2 + pdk.util_max_metal_seperation()/2)
+            guardring_ref.move(nfet_ref.center).movey(evaluate_bbox(pfet_ref)[1]/2 + (pdk.util_max_metal_seperation() + 0.02)/2)
             top_level.add_ports(guardring_ref.get_ports_list(),prefix="tap_")
     
     component = component_snap_to_grid(rename_ports_by_orientation(top_level)) 
