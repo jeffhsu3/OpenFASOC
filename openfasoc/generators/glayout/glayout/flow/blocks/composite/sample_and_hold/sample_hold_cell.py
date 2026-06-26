@@ -122,6 +122,7 @@ def sample_hold_cell(
     
     # Custom Routing
     from glayout.flow.primitives.via_gen import via_stack
+    from glayout.flow.routing.straight_route import straight_route
 
     def drop_via(layer1, layer2, port):
         v = via_stack(pdk, layer1, layer2, fulltop=True, fullbottom=True)
@@ -130,51 +131,57 @@ def sample_hold_cell(
         v_ref.movey(port.center[1] - v_ref.center[1])
         return v_ref
 
-    # Top plate (V1 = VOUT) = cap top plate (met5):
+    # The MIM cap top/bottom plate metals are PDK-dependent (gf180: met5/met4;
+    # sky130: met3/met4). Derive them from the cap's actual ports so this cell is
+    # PDK-agnostic rather than hardcoding gf180's stack.
+    mim_top_layer = pdk.layer_to_glayer(mim_ref.ports["row0_col0_top_met_E"].layer)
+    mim_bottom_layer = pdk.layer_to_glayer(mim_ref.ports["row0_col0_bottom_met_E"].layer)
+
+    # Top plate (V1 = VOUT) = cap top plate:
     if with_reset:
         # Route rst_port right by 1.0um before dropping via to avoid crossing North tie ring on met2
         rst_port = rst_ref.ports["multiplier_0_drain_E"].copy()
         rst_port.center = (rst_port.center[0] + 1.0, rst_port.center[1])
-        from glayout.flow.routing.straight_route import straight_route
         top_level << straight_route(pdk, rst_ref.ports["multiplier_0_drain_E"], rst_port, glayer1="met2", glayer2="met2")
-        rst_via = drop_via("met2", "met5", rst_port)
+        rst_via = drop_via("met2", mim_top_layer, rst_port)
         top_level << L_route(
             pdk,
             rst_via.ports["top_met_N"],
             mim_ref.ports["row0_col0_top_met_W"],
-            hglayer="met5",
-            vglayer="met5",
+            hglayer=mim_top_layer,
+            vglayer=mim_top_layer,
             vwidth=1.0,
             hwidth=1.0,
         )
 
-    # TG VOUT via (M2 -> M5)
+    # TG VOUT via (M2 -> cap top plate). Outside the reset block so VOUT always
+    # connects to the hold cap, with or without the reset switch.
     tg_vout_port = tg_ref.ports["P_multiplier_0_drain_W"].copy()
     tg_vout_port.center = (tg_vout_port.center[0] - 1.0, tg_vout_port.center[1])
     top_level << straight_route(pdk, tg_ref.ports["P_multiplier_0_drain_W"], tg_vout_port, glayer1="met2", glayer2="met2")
-    tg_vout_via = drop_via("met2", "met5", tg_vout_port)
+    tg_vout_via = drop_via("met2", mim_top_layer, tg_vout_port)
     top_level << L_route(
         pdk,
         tg_vout_via.ports["top_met_N"],
         mim_ref.ports["row0_col0_top_met_E"],
-        hglayer="met5",
-        vglayer="met5",
+        hglayer=mim_top_layer,
+        vglayer=mim_top_layer,
         vwidth=1.0,
         hwidth=1.0,
     )
 
-    # Bottom plate (V2 = VSS) = cap bottom plate (met4):
-    # TG VSS via (M2 -> M4)
+    # Bottom plate (V2 = VSS) = cap bottom plate:
+    # TG VSS via (M2 -> cap bottom plate)
     tg_vss_port = tg_ref.ports["N_tie_S_top_met_N"].copy()
     tg_vss_port.center = (tg_vss_port.center[0], tg_vss_port.center[1] - 1.0)
     top_level << straight_route(pdk, tg_ref.ports["N_tie_S_top_met_N"], tg_vss_port, glayer1="met2", glayer2="met2")
-    tg_vss_via = drop_via("met2", "met4", tg_vss_port)
+    tg_vss_via = drop_via("met2", mim_bottom_layer, tg_vss_port)
     top_level << L_route(
         pdk,
         tg_vss_via.ports["top_met_S"],
         mim_ref.ports["row0_col0_bottom_met_E"],
-        hglayer="met4",
-        vglayer="met4",
+        hglayer=mim_bottom_layer,
+        vglayer=mim_bottom_layer,
         vwidth=1.0,
         hwidth=1.0,
     )
@@ -189,14 +196,18 @@ def sample_hold_cell(
     # Move CLK_B via right by 1.0um to avoid met3 spacing with VOUT via
     clk_b_port = tg_ref.ports["P_multiplier_0_gate_E"].copy()
     clk_b_port.center = (clk_b_port.center[0] + 1.0, clk_b_port.center[1])
-    from glayout.flow.routing.straight_route import straight_route
     top_level << straight_route(pdk, tg_ref.ports["P_multiplier_0_gate_E"], clk_b_port, glayer1="met2", glayer2="met2")
     clk_b_via = drop_via("met2", "met3", clk_b_port)
     expose("CLK_B", clk_b_via.ports["top_met_N"], "met3")
     expose("VCC", tg_ref.ports["P_tie_S_top_met_S"], "met2")
     expose("VSS", tg_ref.ports["N_tie_S_top_met_N"], "met2")
-    expose("VOUT", mim_ref.ports["row0_col0_top_met_W"], "met5")
-    
+    expose("VOUT", mim_ref.ports["row0_col0_top_met_W"], mim_top_layer)
+    # Routable met2 tap on the VOUT net, OFF the MIM cap (the TG-drain side of the
+    # hold node). Downstream assembly must connect here: you cannot drop a via
+    # through a MIM cap, so the met5 VOUT port above is for labeling/probing, not
+    # for routing into the next stage.
+    expose("VOUT_TAP", tg_vout_via.ports["bottom_met_N"], "met2")
+
     if with_reset:
         expose("RESET", rst_ref.ports["multiplier_0_gate_W"], "met2")
         expose("VZERO", rst_ref.ports["multiplier_0_source_W"], "met2")
