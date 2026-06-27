@@ -63,7 +63,8 @@ def sample_hold_cell(
     cap_size: tuple[float, float] = (5.0, 5.0),
     cap_rows: int = 1,
     cap_cols: int =  1,
-    with_reset: bool = True
+    with_reset: bool = True,
+    reset_fingers: int = 1, 
 ) -> Component:
     """
     A reusable Sample-and-Hold (S&H) storage cell.
@@ -71,6 +72,7 @@ def sample_hold_cell(
     Optionally resets VOUT to VZERO when RESET is high.
     """
     top_level = Component(name="sample_hold_cell")
+    SEP_MULT = 1
     
     # 1. Transmission Gate
     tg_comp = transmission_gate(
@@ -91,15 +93,20 @@ def sample_hold_cell(
     )
     mim_ref = top_level << mim_comp
     
-    # Place MIM cap to the left of TG
-    # OPTIMIZE placement here
-    mim_ref.movex(tg_ref.xmin - evaluate_bbox(mim_ref)[0] - pdk.util_max_metal_seperation() * 4)
+    mim_ref.movex(tg_ref.xmin - evaluate_bbox(mim_ref)[0] - pdk.util_max_metal_seperation() * SEP_MULT)
     mim_ref.movey(tg_ref.center[1] - mim_ref.center[1])
     
     # 3. Optional Reset Switch (NMOS)
     rst_comp = None
     rst_ref = None
     if with_reset:
+        # τ = Ron_reset × C_hold
+        if reset_fingers > 1:
+            # Need to handle routing
+            # τ = Ron_reset × C_hold
+            # Probably need to this to be automatic and also be scaled
+            # depending on the PDK
+            raise NotImplementedError
         rst_comp = nmos(
             pdk,
             width=1.0,
@@ -110,14 +117,12 @@ def sample_hold_cell(
             with_dnwell=False,
             with_substrate_tap=False,
             inter_finger_topmet="met1",
-            # NOTE: met1 SD routing crashes glayout nmos (KeyError bottom_met_N); the
-            # met2-rail M2.2a needs a primitive-level fix, not a config flag.
             sd_route_topmet="met2",
             gate_route_topmet="met2",
         )
         rst_ref = top_level << rst_comp
         # Place to the left of the MIM cap
-        rst_ref.movex(mim_ref.xmin - evaluate_bbox(rst_ref)[0] - pdk.util_max_metal_seperation() * 4)
+        rst_ref.movex(mim_ref.xmin - evaluate_bbox(rst_ref)[0] - pdk.util_max_metal_seperation() * SEP_MULT)
         rst_ref.movey(mim_ref.center[1] - rst_ref.center[1])
     
     # Custom Routing
@@ -136,14 +141,19 @@ def sample_hold_cell(
     # PDK-agnostic rather than hardcoding gf180's stack.
     mim_top_layer = pdk.layer_to_glayer(mim_ref.ports["row0_col0_top_met_E"].layer)
     mim_bottom_layer = pdk.layer_to_glayer(mim_ref.ports["row0_col0_bottom_met_E"].layer)
+    ROUTING_SEP = 1.1
 
     # Top plate (V1 = VOUT) = cap top plate:
     if with_reset:
-        # Route rst_port right by 1.0um before dropping via to avoid crossing North tie ring on met2
-        rst_port = rst_ref.ports["multiplier_0_drain_E"].copy()
-        rst_port.center = (rst_port.center[0] + 1.0, rst_port.center[1])
-        top_level << straight_route(pdk, rst_ref.ports["multiplier_0_drain_E"], rst_port, glayer1="met2", glayer2="met2")
-        rst_via = drop_via("met2", mim_top_layer, rst_port)
+        # Route rst_port right by 1.0um on met3 to avoid crossing dummy routes on met2
+        rst_drain_port = rst_ref.ports["multiplier_0_drain_E"].copy()
+        rst_drain_port.center = (rst_drain_port.center[0] - 0.1, rst_drain_port.center[1])
+        rst_via1 = drop_via("met2", "met3", rst_drain_port)
+        
+        rst_port = rst_via1.ports["top_met_E"].copy()
+        rst_port.center = (rst_port.center[0] + 1.1, rst_port.center[1])
+        top_level << straight_route(pdk, rst_via1.ports["top_met_E"], rst_port, glayer1="met3", glayer2="met3")
+        rst_via = drop_via("met3", mim_top_layer, rst_port)
         top_level << L_route(
             pdk,
             rst_via.ports["top_met_N"],
@@ -156,10 +166,15 @@ def sample_hold_cell(
 
     # TG VOUT via (M2 -> cap top plate). Outside the reset block so VOUT always
     # connects to the hold cap, with or without the reset switch.
+    # TG VOUT via (M2 -> M3 -> cap top plate).
     tg_vout_port = tg_ref.ports["P_multiplier_0_drain_W"].copy()
-    tg_vout_port.center = (tg_vout_port.center[0] - 1.0, tg_vout_port.center[1])
-    top_level << straight_route(pdk, tg_ref.ports["P_multiplier_0_drain_W"], tg_vout_port, glayer1="met2", glayer2="met2")
-    tg_vout_via = drop_via("met2", mim_top_layer, tg_vout_port)
+    tg_vout_port.center = (tg_vout_port.center[0] + 0.1, tg_vout_port.center[1])
+    tg_vout_via1 = drop_via("met2", "met3", tg_vout_port)
+    
+    tg_vout_port2 = tg_vout_via1.ports["top_met_W"].copy()
+    tg_vout_port2.center = (tg_vout_port2.center[0] - 1.1, tg_vout_port2.center[1])
+    top_level << straight_route(pdk, tg_vout_via1.ports["top_met_W"], tg_vout_port2, glayer1="met3", glayer2="met3")
+    tg_vout_via = drop_via("met3", mim_top_layer, tg_vout_port2)
     top_level << L_route(
         pdk,
         tg_vout_via.ports["top_met_N"],
@@ -187,39 +202,54 @@ def sample_hold_cell(
     )
     
     # Expose Ports
-    def expose(name: str, port, glayer: str):
+    def expose(name: str, port, glayer: str | None = None):
         top_level.add_port(name=name, port=port)
-        top_level.add_label(text=name, position=port.center, layer=pdk.get_glayer(glayer))
+        # Use port's actual layer if glayer not provided
+        if glayer is None:
+            glayer = pdk.layer_to_glayer(port.layer)
+        
+        # Move the label slightly inside the polygon to ensure Magic attaches it properly
+        import numpy as np
+        angle = port.orientation
+        if angle is not None:
+            dx = -0.1 * np.cos(np.radians(angle))
+            dy = -0.1 * np.sin(np.radians(angle))
+        else:
+            dx, dy = 0, 0
+        pos = (port.center[0] + dx, port.center[1] + dy)
+        
+        top_level.add_label(text=name, position=pos, layer=pdk.get_glayer(glayer))
 
-    expose("VIN", tg_ref.ports["P_multiplier_0_source_E"], "met2")
-    expose("CLK", tg_ref.ports["N_multiplier_0_gate_E"], "met2")
+    expose("VIN", tg_ref.ports["P_multiplier_0_source_E"])
+    expose("CLK", tg_ref.ports["N_multiplier_0_gate_E"])
     # Move CLK_B via right by 1.0um to avoid met3 spacing with VOUT via
     clk_b_port = tg_ref.ports["P_multiplier_0_gate_E"].copy()
     clk_b_port.center = (clk_b_port.center[0] + 1.0, clk_b_port.center[1])
     top_level << straight_route(pdk, tg_ref.ports["P_multiplier_0_gate_E"], clk_b_port, glayer1="met2", glayer2="met2")
     clk_b_via = drop_via("met2", "met3", clk_b_port)
-    expose("CLK_B", clk_b_via.ports["top_met_N"], "met3")
-    expose("VCC", tg_ref.ports["P_tie_S_top_met_S"], "met2")
-    expose("VSS", tg_ref.ports["N_tie_S_top_met_N"], "met2")
-    expose("VOUT", mim_ref.ports["row0_col0_top_met_W"], mim_top_layer)
+    expose("CLK_B", clk_b_via.ports["top_met_N"])
+    expose("VCC", tg_ref.ports["P_tie_S_top_met_S"])
+    expose("VSS", tg_ref.ports["N_tie_S_top_met_N"])
+    expose("VOUT", mim_ref.ports["row0_col0_top_met_W"])
     # Routable met2 tap on the VOUT net, OFF the MIM cap (the TG-drain side of the
     # hold node). Downstream assembly must connect here: you cannot drop a via
     # through a MIM cap, so the met5 VOUT port above is for labeling/probing, not
     # for routing into the next stage.
-    expose("VOUT_TAP", tg_vout_via.ports["bottom_met_N"], "met2")
+    expose("VOUT_TAP", tg_vout_via.ports["bottom_met_N"])
 
     if with_reset:
-        expose("RESET", rst_ref.ports["multiplier_0_gate_W"], "met2")
-        expose("VZERO", rst_ref.ports["multiplier_0_source_W"], "met2")
+        expose("RESET", rst_ref.ports["multiplier_0_gate_W"])
+        expose("VZERO", rst_ref.ports["multiplier_0_source_W"])
         # Route NMOS body to VSS if needed, or assume it's global substrate
     
     top_level.info["netlist"] = _sample_hold_netlist(tg_comp, mim_comp, rst_comp)
     
     return top_level
 
-if __name__ == "__main__":
+
+if __name__ == "__main__": 
     from glayout.flow.pdk.gf180_mapped.gf180_mapped import gf180_mapped_pdk
     print("Generating sample_hold_cell...")
-    comp = sample_hold_cell(gf180_mapped_pdk)
+    comp = sample_hold_cell(gf180_mapped_pdk, cap_size=(20, 10))
     comp.write_gds("sample_hold_cell.gds")
     print(f"Generated GDS successfully: {comp.name}")
