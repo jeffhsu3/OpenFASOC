@@ -64,7 +64,7 @@ def sample_hold_cell(
     cap_rows: int = 1,
     cap_cols: int =  1,
     with_reset: bool = True,
-    reset_fingers: int = 1, 
+    reset_fingers: int = 1,
 ) -> Component:
     """
     A reusable Sample-and-Hold (S&H) storage cell.
@@ -74,7 +74,6 @@ def sample_hold_cell(
     top_level = Component(name="sample_hold_cell")
     SEP_MULT = 1
     
-    # 1. Transmission Gate
     tg_comp = transmission_gate(
         pdk=pdk,
         width=switch_width,
@@ -84,7 +83,6 @@ def sample_hold_cell(
     )
     tg_ref = top_level << tg_comp
     
-    # 2. MIM Capacitor
     mim_comp = mimcap_array(
         pdk=pdk,
         rows=cap_rows,
@@ -96,11 +94,9 @@ def sample_hold_cell(
     mim_ref.movex(tg_ref.xmin - evaluate_bbox(mim_ref)[0] - pdk.util_max_metal_seperation() * SEP_MULT)
     mim_ref.movey(tg_ref.center[1] - mim_ref.center[1])
     
-    # 3. Optional Reset Switch (NMOS)
     rst_comp = None
     rst_ref = None
     if with_reset:
-        # τ = Ron_reset × C_hold
         if reset_fingers > 1:
             # Need to handle routing
             # τ = Ron_reset × C_hold
@@ -122,7 +118,8 @@ def sample_hold_cell(
         )
         rst_ref = top_level << rst_comp
         # Place to the left of the MIM cap
-        rst_ref.movex(mim_ref.xmin - evaluate_bbox(rst_ref)[0] - pdk.util_max_metal_seperation() * SEP_MULT)
+        # rst_ref.movex(mim_ref.xmin - evaluate_bbox(rst_ref)[0] - pdk.util_max_metal_seperation() * SEP_MULT)
+        rst_ref.movex(mim_ref.xmin - evaluate_bbox(rst_ref)[0])
         rst_ref.movey(mim_ref.center[1] - rst_ref.center[1])
     
     # Custom Routing
@@ -136,9 +133,9 @@ def sample_hold_cell(
         v_ref.movey(port.center[1] - v_ref.center[1])
         return v_ref
 
-    # The MIM cap top/bottom plate metals are PDK-dependent (gf180: met5/met4;
-    # sky130: met3/met4). Derive them from the cap's actual ports so this cell is
-    # PDK-agnostic rather than hardcoding gf180's stack.
+    # The MIM cap top/bottom plate metals are PDK-dependent (both gf180 and sky130
+    # use met5/met4 top/bottom, but other PDKs may differ). Derive them from the
+    # cap's actual ports so this cell is PDK-agnostic rather than hardcoding a stack.
     mim_top_layer = pdk.layer_to_glayer(mim_ref.ports["row0_col0_top_met_E"].layer)
     mim_bottom_layer = pdk.layer_to_glayer(mim_ref.ports["row0_col0_bottom_met_E"].layer)
     ROUTING_SEP = 1.1
@@ -151,7 +148,7 @@ def sample_hold_cell(
         rst_via1 = drop_via("met2", "met3", rst_drain_port)
         
         rst_port = rst_via1.ports["top_met_E"].copy()
-        rst_port.center = (rst_port.center[0] + 1.1, rst_port.center[1])
+        rst_port.center = (rst_port.center[0] + ROUTING_SEP, rst_port.center[1])
         top_level << straight_route(pdk, rst_via1.ports["top_met_E"], rst_port, glayer1="met3", glayer2="met3")
         rst_via = drop_via("met3", mim_top_layer, rst_port)
         top_level << L_route(
@@ -184,22 +181,32 @@ def sample_hold_cell(
         vwidth=1.0,
         hwidth=1.0,
     )
-
-    # Bottom plate (V2 = VSS) = cap bottom plate:
-    # TG VSS via (M2 -> cap bottom plate)
-    tg_vss_port = tg_ref.ports["N_tie_S_top_met_N"].copy()
-    tg_vss_port.center = (tg_vss_port.center[0], tg_vss_port.center[1] - 1.0)
-    top_level << straight_route(pdk, tg_ref.ports["N_tie_S_top_met_N"], tg_vss_port, glayer1="met2", glayer2="met2")
-    tg_vss_via = drop_via("met2", mim_bottom_layer, tg_vss_port)
-    top_level << L_route(
-        pdk,
-        tg_vss_via.ports["top_met_S"],
-        mim_ref.ports["row0_col0_bottom_met_E"],
-        hglayer=mim_bottom_layer,
-        vglayer=mim_bottom_layer,
-        vwidth=1.0,
-        hwidth=1.0,
-    )
+    
+    # Bottom plate (V2 = VSS): use the NMOS tie NORTH bar. Its y (~+2.475) falls
+    # within the MIM cap bottom-plate y-extent even for the smallest (5x5) cap, so a
+    # straight met2 run west lands a single met2->met4 via directly on the bottom
+    # plate -- no L_route needed. (The south tie at y~-2.475 sits below the 5x5
+    # plate, which is why it previously needed an L_route.)
+    #
+    # Reference the bottom-plate's own east port (the met4 edge) rather than the
+    # component bbox, and inset the via west so its land sits fully ON the plate
+    # instead of overhanging the met4 edge. Note: the met4 bottom plate legitimately
+    # extends ~0.6um (the met4:capmet enclosure) beyond the visible top-plate cap,
+    # so the via correctly lands on that enclosure ring.
+    #
+    # Derive the inset from the PDK, not a magic number: half the actual via-land
+    # width keeps the land's east edge inside the plate edge, plus one bottom-metal
+    # min_separation so the plate cleanly encloses the land. This matters across
+    # PDKs -- the via land is 0.5um on gf180 but 1.5um on sky130, so a fixed inset
+    # would leave the via overhanging on sky130.
+    plate_e = mim_ref.ports["row0_col0_bottom_met_E"]
+    vss_via_land = via_stack(pdk, "met2", mim_bottom_layer, fulltop=True, fullbottom=True)
+    via_inset = evaluate_bbox(vss_via_land)[0] / 2.0 + pdk.get_grule(mim_bottom_layer)["min_separation"]
+    tie_w = tg_ref.ports["N_tie_N_top_met_W"]
+    vss_met2_dst = tie_w.copy()
+    vss_met2_dst.center = (plate_e.center[0] - via_inset, tie_w.center[1])
+    top_level << straight_route(pdk, tie_w, vss_met2_dst, glayer1="met2", glayer2="met2")
+    drop_via("met2", mim_bottom_layer, vss_met2_dst)
     
     # Expose Ports
     def expose(name: str, port, glayer: str | None = None):
@@ -222,12 +229,8 @@ def sample_hold_cell(
 
     expose("VIN", tg_ref.ports["P_multiplier_0_source_E"])
     expose("CLK", tg_ref.ports["N_multiplier_0_gate_E"])
-    # Move CLK_B via right by 1.0um to avoid met3 spacing with VOUT via
-    clk_b_port = tg_ref.ports["P_multiplier_0_gate_E"].copy()
-    clk_b_port.center = (clk_b_port.center[0] + 1.0, clk_b_port.center[1])
-    top_level << straight_route(pdk, tg_ref.ports["P_multiplier_0_gate_E"], clk_b_port, glayer1="met2", glayer2="met2")
-    clk_b_via = drop_via("met2", "met3", clk_b_port)
-    expose("CLK_B", clk_b_via.ports["top_met_N"])
+    expose("CLK_B", tg_ref.ports["P_multiplier_0_gate_E"])
+
     expose("VCC", tg_ref.ports["P_tie_S_top_met_S"])
     expose("VSS", tg_ref.ports["N_tie_S_top_met_N"])
     expose("VOUT", mim_ref.ports["row0_col0_top_met_W"])
