@@ -6,7 +6,6 @@ from glayout.flow.pdk.mappedpdk import MappedPDK
 from glayout.flow.blocks.elementary.transmission_gate.transmission_gate import transmission_gate
 from glayout.flow.primitives.fet import nmos
 from glayout.flow.primitives.mimcap import mimcap_array
-from glayout.flow.routing.L_route import L_route
 from glayout.flow.pdk.util.comp_utils import evaluate_bbox
 from glayout.flow.spice.netlist import Netlist
 
@@ -72,7 +71,11 @@ def sample_hold_cell(
     Optionally resets VOUT to VZERO when RESET is high.
     """
     top_level = Component(name="sample_hold_cell")
-    SEP_MULT = 1
+    placement_sep = 0.0
+
+    def place_left_of(left_ref, right_ref, separation: float = placement_sep):
+        left_ref.movex(right_ref.xmin - left_ref.xmax - separation)
+        left_ref.movey(right_ref.center[1] - left_ref.center[1])
     
     tg_comp = transmission_gate(
         pdk=pdk,
@@ -91,17 +94,13 @@ def sample_hold_cell(
     )
     mim_ref = top_level << mim_comp
     
-    mim_ref.movex(tg_ref.xmin - evaluate_bbox(mim_ref)[0] - pdk.util_max_metal_seperation() * SEP_MULT)
-    mim_ref.movey(tg_ref.center[1] - mim_ref.center[1])
+    place_left_of(mim_ref, tg_ref)
     
     rst_comp = None
     rst_ref = None
     if with_reset:
         if reset_fingers > 1:
-            # Need to handle routing
-            # τ = Ron_reset × C_hold
-            # Probably need to this to be automatic and also be scaled
-            # depending on the PDK
+            # :TODO auto-adjust to τ = Ron_reset × C_hold
             raise NotImplementedError
         rst_comp = nmos(
             pdk,
@@ -117,12 +116,8 @@ def sample_hold_cell(
             gate_route_topmet="met2",
         )
         rst_ref = top_level << rst_comp
-        # Place to the left of the MIM cap
-        # rst_ref.movex(mim_ref.xmin - evaluate_bbox(rst_ref)[0] - pdk.util_max_metal_seperation() * SEP_MULT)
-        rst_ref.movex(mim_ref.xmin - evaluate_bbox(rst_ref)[0])
-        rst_ref.movey(mim_ref.center[1] - rst_ref.center[1])
+        place_left_of(rst_ref, mim_ref)
     
-    # Custom Routing
     from glayout.flow.primitives.via_gen import via_stack
     from glayout.flow.routing.straight_route import straight_route
 
@@ -138,62 +133,52 @@ def sample_hold_cell(
     # cap's actual ports so this cell is PDK-agnostic rather than hardcoding a stack.
     mim_top_layer = pdk.layer_to_glayer(mim_ref.ports["row0_col0_top_met_E"].layer)
     mim_bottom_layer = pdk.layer_to_glayer(mim_ref.ports["row0_col0_bottom_met_E"].layer)
-    ROUTING_SEP = 1.1
 
-    # Top plate (V1 = VOUT) = cap top plate:
     if with_reset:
-        # Route rst_port right by 1.0um on met3 to avoid crossing dummy routes on met2
         rst_drain_port = rst_ref.ports["multiplier_0_drain_E"].copy()
-        rst_drain_port.center = (rst_drain_port.center[0] - 0.1, rst_drain_port.center[1])
-        rst_via1 = drop_via("met2", "met3", rst_drain_port)
-        
-        rst_port = rst_via1.ports["top_met_E"].copy()
-        rst_port.center = (rst_port.center[0] + ROUTING_SEP, rst_port.center[1])
-        top_level << straight_route(pdk, rst_via1.ports["top_met_E"], rst_port, glayer1="met3", glayer2="met3")
-        rst_via = drop_via("met3", mim_top_layer, rst_port)
-        top_level << L_route(
-            pdk,
-            rst_via.ports["top_met_N"],
-            mim_ref.ports["row0_col0_top_met_W"],
-            hglayer=mim_top_layer,
-            vglayer=mim_top_layer,
-            vwidth=1.0,
-            hwidth=1.0,
+        mim_top_layer = pdk.layer_to_glayer(mim_ref.ports["row0_col0_top_met_W"].layer)
+        mim_layer_top_w = mim_ref.ports["row0_col0_top_met_W"].copy()
+        rst_drain_dest = rst_drain_port.copy()
+        rst_drain_dest.center = (mim_layer_top_w.center[0], rst_drain_port.center[1])
+        top_level << straight_route(pdk, rst_drain_port, rst_drain_dest, glayer1=mim_top_layer, glayer2=mim_top_layer)
+
+    # TG VOUT (V1 = top plate). Outside the reset block so VOUT always connects to the
+    # hold cap, with or without the reset switch. Single met2->met5 via at the TG drain,
+    # then a straight met5 run west onto the top plate at the drain's y -- mirrors the
+    # VSS routing but climbs to the TOP plate. The via sits at the drain, EAST of the
+    # cap and off its footprint, so the met2->met5 stack never punches through the met4
+    # bottom plate (which would short VOUT to VSS).
+    #
+    # Use the HIGHEST PMOS multiplier index: multiplier_0 is the topmost drain (furthest
+    # from the TG center), and the cap plate is centered on the TG, so the highest index
+    # (the bottommost drain, nearest center) is the one that lands within the plate
+    # y-extent for multipliers > 1. switch_multipliers is (NMOS, PMOS); the drain is PMOS.
+    pmos_mult = int(switch_multipliers[1])
+    tg_vout_port = tg_ref.ports[f"P_multiplier_{pmos_mult - 1}_drain_W"].copy()
+    tg_vout_port.center = (tg_vout_port.center[0] + 0.1, tg_vout_port.center[1])
+
+    # The straight met5 run lands on the plate only if the drain's y is within the
+    # top-plate y-extent. For tall switches with a short cap (e.g. asymmetric
+    # multipliers + a small cap) even the bottommost PMOS drain can sit above the
+    # plate, which would silently leave VOUT open. Fail loudly instead.
+    # This happens around (4, 4) caps
+    tp_s = mim_ref.ports["row0_col0_top_met_S"].center[1]
+    tp_n = mim_ref.ports["row0_col0_top_met_N"].center[1]
+    if not (tp_s <= tg_vout_port.center[1] <= tp_n):
+        raise NotImplementedError(
+            f"TG VOUT drain (y={tg_vout_port.center[1]:.2f}) falls outside the cap "
+            f"top-plate y-extent [{tp_s:.2f}, {tp_n:.2f}] for "
+            f"switch_multipliers={switch_multipliers}, cap_size={cap_size}: the "
+            f"straight met5 route would leave VOUT open. Increase the cap height "
+            f"(cap_size[1]) or rebalance the switch multipliers."
         )
 
-    # TG VOUT via (M2 -> cap top plate). Outside the reset block so VOUT always
-    # connects to the hold cap, with or without the reset switch.
-    # TG VOUT via (M2 -> M3 -> cap top plate).
-    tg_vout_port = tg_ref.ports["P_multiplier_0_drain_W"].copy()
-    tg_vout_port.center = (tg_vout_port.center[0] + 0.1, tg_vout_port.center[1])
-    tg_vout_via1 = drop_via("met2", "met3", tg_vout_port)
+    tg_vout_via = drop_via("met2", mim_top_layer, tg_vout_port)
+    vout_inset = pdk.get_grule(mim_top_layer)["min_separation"]
+    vout_met5_dst = tg_vout_via.ports["top_met_W"].copy()
+    vout_met5_dst.center = (mim_ref.ports["row0_col0_top_met_E"].center[0] - vout_inset, vout_met5_dst.center[1])
+    top_level << straight_route(pdk, tg_vout_via.ports["top_met_W"], vout_met5_dst, glayer1=mim_top_layer, glayer2=mim_top_layer)
     
-    tg_vout_port2 = tg_vout_via1.ports["top_met_W"].copy()
-    tg_vout_port2.center = (tg_vout_port2.center[0] - 1.1, tg_vout_port2.center[1])
-    top_level << straight_route(pdk, tg_vout_via1.ports["top_met_W"], tg_vout_port2, glayer1="met3", glayer2="met3")
-    tg_vout_via = drop_via("met3", mim_top_layer, tg_vout_port2)
-    top_level << L_route(
-        pdk,
-        tg_vout_via.ports["top_met_N"],
-        mim_ref.ports["row0_col0_top_met_E"],
-        hglayer=mim_top_layer,
-        vglayer=mim_top_layer,
-        vwidth=1.0,
-        hwidth=1.0,
-    )
-    
-    # Bottom plate (V2 = VSS): use the NMOS tie NORTH bar. Its y (~+2.475) falls
-    # within the MIM cap bottom-plate y-extent even for the smallest (5x5) cap, so a
-    # straight met2 run west lands a single met2->met4 via directly on the bottom
-    # plate -- no L_route needed. (The south tie at y~-2.475 sits below the 5x5
-    # plate, which is why it previously needed an L_route.)
-    #
-    # Reference the bottom-plate's own east port (the met4 edge) rather than the
-    # component bbox, and inset the via west so its land sits fully ON the plate
-    # instead of overhanging the met4 edge. Note: the met4 bottom plate legitimately
-    # extends ~0.6um (the met4:capmet enclosure) beyond the visible top-plate cap,
-    # so the via correctly lands on that enclosure ring.
-    #
     # Derive the inset from the PDK, not a magic number: half the actual via-land
     # width keeps the land's east edge inside the plate edge, plus one bottom-metal
     # min_separation so the plate cleanly encloses the land. This matters across
@@ -234,10 +219,6 @@ def sample_hold_cell(
     expose("VCC", tg_ref.ports["P_tie_S_top_met_S"])
     expose("VSS", tg_ref.ports["N_tie_S_top_met_N"])
     expose("VOUT", mim_ref.ports["row0_col0_top_met_W"])
-    # Routable met2 tap on the VOUT net, OFF the MIM cap (the TG-drain side of the
-    # hold node). Downstream assembly must connect here: you cannot drop a via
-    # through a MIM cap, so the met5 VOUT port above is for labeling/probing, not
-    # for routing into the next stage.
     expose("VOUT_TAP", tg_vout_via.ports["bottom_met_N"])
 
     if with_reset:
@@ -253,6 +234,6 @@ def sample_hold_cell(
 if __name__ == "__main__": 
     from glayout.flow.pdk.gf180_mapped.gf180_mapped import gf180_mapped_pdk
     print("Generating sample_hold_cell...")
-    comp = sample_hold_cell(gf180_mapped_pdk, cap_size=(20, 10))
+    comp = sample_hold_cell(gf180_mapped_pdk, switch_multipliers=(2, 2), cap_size=(4, 4))
     comp.write_gds("sample_hold_cell.gds")
     print(f"Generated GDS successfully: {comp.name}")
