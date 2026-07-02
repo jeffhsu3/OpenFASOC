@@ -23,12 +23,12 @@ from glayout.flow.spice import Netlist
 
 
 @validate_arguments
-def __create_sharedgatecomps(pdk: MappedPDK, rmult: int, half_pload: tuple[float,float,int]) -> tuple:
+def __create_sharedgatecomps(pdk: MappedPDK, rmult: int, half_pload: tuple[float,float,int], inter_finger_topmet: str = "met2") -> tuple:
     # add diffpair current mirror loads (this is a pmos current mirror split into 2 for better matching/compensation)
     shared_gate_comps = Component("shared gate components")
     # create the 2*2 multiplier transistors (placed twice later)
     twomultpcomps = Component("2 multiplier shared gate comps")
-    pcompR = multiplier(pdk, "p+s/d", width=half_pload[0], length=half_pload[1], fingers=half_pload[2], dummy=True,rmult=rmult).copy()
+    pcompR = multiplier(pdk, "p+s/d", width=half_pload[0], length=half_pload[1], fingers=half_pload[2], dummy=True,rmult=rmult,inter_finger_topmet=inter_finger_topmet).copy()
     tapref = pcompR << tapring(pdk, evaluate_bbox(pcompR,padding=0.3+pdk.get_grule("n+s/d", "active_tap")["min_enclosure"]),"n+s/d","met1","met1")
     pcompR.add_padding(layers=(pdk.get_glayer("nwell"),), default=pdk.get_grule("active_tap", "nwell")["min_enclosure"])
     pcompR.add_ports(tapref.get_ports_list(),prefix="welltap_")
@@ -43,7 +43,7 @@ def __create_sharedgatecomps(pdk: MappedPDK, rmult: int, half_pload: tuple[float
     twomultpcomps << route_quad(_prefL.ports["gate_W"], _prefR.ports["gate_E"], layer=pdk.get_glayer("met2"))
     # center
     relative_dim_comp = multiplier(
-        pdk, "p+s/d", width=half_pload[0], length=half_pload[1], fingers=4, dummy=False, rmult=rmult
+        pdk, "p+s/d", width=half_pload[0], length=half_pload[1], fingers=4, dummy=False, rmult=rmult, inter_finger_topmet=inter_finger_topmet
     )
     # TODO: figure out single dim spacing rule then delete both test delete and this
     single_dim = to_decimal(relative_dim_comp.xmax) + to_decimal(0.11) + to_decimal(half_pload[1])/2
@@ -60,14 +60,14 @@ def __create_sharedgatecomps(pdk: MappedPDK, rmult: int, half_pload: tuple[float
             dummy = [True, False]
             appenddummy="L"
             pcenterfourunits = multiplier(
-                pdk, "p+s/d", width=half_pload[0], length=half_pload[1], fingers=4, dummy=dummy, rmult=rmult
+                pdk, "p+s/d", width=half_pload[0], length=half_pload[1], fingers=4, dummy=dummy, rmult=rmult, inter_finger_topmet=inter_finger_topmet
             )
             extra_t = -1 * single_dim
         elif i == 2:
             dummy = [False, True]
             appenddummy="R"
             pcenterfourunits = multiplier(
-                pdk, "p+s/d", width=half_pload[0], length=half_pload[1], fingers=4, dummy=dummy, rmult=rmult
+                pdk, "p+s/d", width=half_pload[0], length=half_pload[1], fingers=4, dummy=dummy, rmult=rmult, inter_finger_topmet=inter_finger_topmet
             )
             extra_t = single_dim
         else:
@@ -166,9 +166,9 @@ XBOT2 VOUT VIN VSS2 VSS {model} l={{l}} w={{w}} m={{mb}}
         }
     )
 
-def differential_to_single_ended_converter(pdk: MappedPDK, rmult: int, half_pload: tuple[float,float,int], via_xlocation) -> Component:
+def differential_to_single_ended_converter(pdk: MappedPDK, rmult: int, half_pload: tuple[float,float,int], via_xlocation, inter_finger_topmet: str = "met2") -> Component:
     clear_cache()
-    pmos_comps, ptop_AB, pbottom_AB, LRplusdopedPorts, LRgatePorts, LRdrainsPorts, LRsourcesPorts, LRdummyports = __create_sharedgatecomps(pdk, rmult,half_pload)
+    pmos_comps, ptop_AB, pbottom_AB, LRplusdopedPorts, LRgatePorts, LRdrainsPorts, LRsourcesPorts, LRdummyports = __create_sharedgatecomps(pdk, rmult,half_pload, inter_finger_topmet=inter_finger_topmet)
     clear_cache()
     pmos_comps = __route_sharedgatecomps(pdk, pmos_comps, via_xlocation, ptop_AB, pbottom_AB, LRplusdopedPorts, LRgatePorts, LRdrainsPorts, LRsourcesPorts, LRdummyports)
 

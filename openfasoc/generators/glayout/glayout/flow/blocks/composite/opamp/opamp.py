@@ -50,6 +50,7 @@ def __add_output_stage(
     amplifierParams: tuple[float, float, int],
     biasParams: list,
     rmult: int,
+    inter_finger_topmet: str = "met2",
 ) -> tuple[Component, Netlist]:
     '''add output stage to opamp_top, args:
     pdk = pdk to use
@@ -70,6 +71,7 @@ def __add_output_stage(
         with_dnwell=False,
         with_tie=True,
         with_substrate_tap=False,
+        inter_finger_topmet=inter_finger_topmet,
         tie_layers=("met2","met2")
     )
     # Instantiate bias FET
@@ -83,6 +85,7 @@ def __add_output_stage(
         sd_route_topmet="met3",
         rmult=rmult,
         with_substrate_tap=False,
+        inter_finger_topmet=inter_finger_topmet,
         tie_layers=("met2","met2")
     )
 
@@ -164,7 +167,8 @@ def opamp(
     mim_cap_rows=3,
     rmult: int = 2,
     with_antenna_diode_on_diffinputs: int=5, 
-    add_output_stage: Optional[bool] = True
+    add_output_stage: Optional[bool] = True,
+    inter_finger_topmet: str = "met2"
 ) -> Component:
     """
     create a two stage opamp with an output buffer, args->
@@ -192,11 +196,12 @@ def opamp(
         mim_cap_size,
         mim_cap_rows,
         rmult,
-        with_antenna_diode_on_diffinputs
+        with_antenna_diode_on_diffinputs,
+        inter_finger_topmet=inter_finger_topmet
     )
     # add output amplfier stage
     if add_output_stage:
-        opamp_top, output_stage_netlist = __add_output_stage(pdk, opamp_top, output_stage_params, output_stage_bias, rmult)
+        opamp_top, output_stage_netlist = __add_output_stage(pdk, opamp_top, output_stage_params, output_stage_bias, rmult, inter_finger_topmet=inter_finger_topmet)
         opamp_top.info['netlist'] = opamp_netlist(opamp_top.info['netlist'], output_stage_netlist)
 
     # return

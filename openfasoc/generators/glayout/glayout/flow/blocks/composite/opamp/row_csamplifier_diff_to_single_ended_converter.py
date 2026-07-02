@@ -39,7 +39,7 @@ def __connect_cs_netlist(pmos_comps: Component, half_cs_pmos: Component):
         [('D', 'VOUT'), ('S', 'VSS'), ('B', 'VSS'), ('G', 'VIN2')]
     )
 
-def row_csamplifier_diff_to_single_ended_converter(pdk: MappedPDK, diff_to_single_ended_converter: Component, pamp_hparams, rmult) -> Component:
+def row_csamplifier_diff_to_single_ended_converter(pdk: MappedPDK, diff_to_single_ended_converter: Component, pamp_hparams, rmult, inter_finger_topmet: str = "met2") -> Component:
     pmos_comps = diff_to_single_ended_converter
 
     pmos_comps.info['netlist'] = row_csamplifier_diff_to_single_ended_converter_netlist(diff_to_single_ended_converter)
@@ -57,6 +57,7 @@ def row_csamplifier_diff_to_single_ended_converter(pdk: MappedPDK, diff_to_singl
             with_substrate_tap=False,
             sd_route_left=bool(direction-1),
             rmult=rmult,
+            inter_finger_topmet=inter_finger_topmet,
             tie_layers=("met2","met2")
         )
         halfMultp_ref = pmos_comps << halfMultp

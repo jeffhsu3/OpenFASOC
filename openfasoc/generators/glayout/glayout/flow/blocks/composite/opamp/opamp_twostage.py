@@ -189,7 +189,8 @@ def opamp_twostage(
     mim_cap_size=(12, 12),
     mim_cap_rows=3,
     rmult: int = 2,
-    with_antenna_diode_on_diffinputs: int=5
+    with_antenna_diode_on_diffinputs: int=5,
+    inter_finger_topmet: str = "met2"
 ) -> Component:
     """
     create a two stage opamp, args->
@@ -204,21 +205,22 @@ def opamp_twostage(
     mim_cap_rows: number of rows in the mimcap array (always 2 cols)
     rmult: routing multiplier (larger = wider routes)
     with_antenna_diode_on_diffinputs: adds antenna diodes with_antenna_diode_on_diffinputs*(1um/0.5um) on the positive and negative inputs to the opamp
+    inter_finger_topmet: top metal of the inter-finger S/D via arrays in all FETs (pass "met1" to clear gf180 M2.2a; see fet.py)
     """
     # error checks
     if with_antenna_diode_on_diffinputs!=0 and with_antenna_diode_on_diffinputs<2:
         raise ValueError("number of antenna diodes should be at least 2 (or 0 to specify no diodes)")
     if half_common_source_bias[3] < 2:
         raise ValueError("half_common_source_bias num multiplier must be >= 2")
-    opamp_top, halfmultn_drain_routeref, halfmultn_gate_routeref, _cref = diff_pair_stackedcmirror(pdk, half_diffpair_params, diffpair_bias, half_common_source_bias, rmult, with_antenna_diode_on_diffinputs)
+    opamp_top, halfmultn_drain_routeref, halfmultn_gate_routeref, _cref = diff_pair_stackedcmirror(pdk, half_diffpair_params, diffpair_bias, half_common_source_bias, rmult, with_antenna_diode_on_diffinputs, inter_finger_topmet=inter_finger_topmet)
 
     opamp_top.info['netlist'].circuit_name = "INPUT_STAGE"
 
     # place pmos components
-    pmos_comps = differential_to_single_ended_converter(pdk, rmult, half_pload, opamp_top.ports["diffpair_tl_multiplier_0_drain_N"].center[0])
+    pmos_comps = differential_to_single_ended_converter(pdk, rmult, half_pload, opamp_top.ports["diffpair_tl_multiplier_0_drain_N"].center[0], inter_finger_topmet=inter_finger_topmet)
     clear_cache()
 
-    pmos_comps = row_csamplifier_diff_to_single_ended_converter(pdk, pmos_comps, half_common_source_params, rmult)
+    pmos_comps = row_csamplifier_diff_to_single_ended_converter(pdk, pmos_comps, half_common_source_params, rmult, inter_finger_topmet=inter_finger_topmet)
 
     cs_bias_netlist = current_mirror_netlist(
         pdk,

@@ -26,9 +26,9 @@ from glayout.flow.blocks.composite.opamp.row_csamplifier_diff_to_single_ended_co
 
 
 @validate_arguments
-def __add_diff_pair_and_bias(pdk: MappedPDK, toplevel_stacked: Component, half_diffpair_params: tuple[float, float, int], diffpair_bias: tuple[float, float, int], rmult: int, with_antenna_diode_on_diffinputs: int) -> Component:
+def __add_diff_pair_and_bias(pdk: MappedPDK, toplevel_stacked: Component, half_diffpair_params: tuple[float, float, int], diffpair_bias: tuple[float, float, int], rmult: int, with_antenna_diode_on_diffinputs: int, inter_finger_topmet: str = "met2") -> Component:
     clear_cache()
-    diffpair_i_ref = diff_pair_ibias(pdk, half_diffpair_params, diffpair_bias, rmult, with_antenna_diode_on_diffinputs)
+    diffpair_i_ref = diff_pair_ibias(pdk, half_diffpair_params, diffpair_bias, rmult, with_antenna_diode_on_diffinputs, inter_finger_topmet=inter_finger_topmet)
     toplevel_stacked.add(diffpair_i_ref)
     toplevel_stacked.add_ports(diffpair_i_ref.get_ports_list(),prefix="diffpair_")
 
@@ -37,12 +37,12 @@ def __add_diff_pair_and_bias(pdk: MappedPDK, toplevel_stacked: Component, half_d
     return toplevel_stacked
 
 @validate_arguments
-def __add_common_source_nbias_transistors(pdk: MappedPDK, toplevel_stacked: Component, half_common_source_nbias: tuple[float, float, int, int], rmult: int) -> Component:
+def __add_common_source_nbias_transistors(pdk: MappedPDK, toplevel_stacked: Component, half_common_source_nbias: tuple[float, float, int, int], rmult: int, inter_finger_topmet: str = "met2") -> Component:
     clear_cache()
     x_dim_center = toplevel_stacked.xmax
     for i in range(2):
         direction = (-1) ** i
-        cmirrorref_ref, cmirrorout_ref = stacked_nfet_current_mirror(pdk, half_common_source_nbias, rmult, direction < 0)
+        cmirrorref_ref, cmirrorout_ref = stacked_nfet_current_mirror(pdk, half_common_source_nbias, rmult, direction < 0, inter_finger_topmet=inter_finger_topmet)
         # xtranslation
         xtranslationO = direction * abs(x_dim_center + cmirrorout_ref.xmax + pdk.util_max_metal_seperation())
         xtranslationR = direction * abs(x_dim_center + cmirrorref_ref.xmax + pdk.util_max_metal_seperation())
@@ -111,14 +111,15 @@ def diff_pair_stackedcmirror(
     diffpair_bias: tuple[float, float, int],
     half_common_source_nbias: tuple[float, float, int, int],
     rmult: int,
-    with_antenna_diode_on_diffinputs: int
+    with_antenna_diode_on_diffinputs: int,
+    inter_finger_topmet: str = "met2"
 ) -> Component:
     # create toplevel_stacked component
     toplevel_stacked = Component()
     # place nmos components
-    diffpair_and_bias = __add_diff_pair_and_bias(pdk, toplevel_stacked, half_diffpair_params, diffpair_bias, rmult, with_antenna_diode_on_diffinputs)
+    diffpair_and_bias = __add_diff_pair_and_bias(pdk, toplevel_stacked, half_diffpair_params, diffpair_bias, rmult, with_antenna_diode_on_diffinputs, inter_finger_topmet=inter_finger_topmet)
     # create and position each half of the nmos bias transistor for the common source stage symetrically
-    toplevel_stacked = __add_common_source_nbias_transistors(pdk, toplevel_stacked, half_common_source_nbias, rmult)
+    toplevel_stacked = __add_common_source_nbias_transistors(pdk, toplevel_stacked, half_common_source_nbias, rmult, inter_finger_topmet=inter_finger_topmet)
     toplevel_stacked.add_padding(layers=(pdk.get_glayer("pwell"),),default=0)
     # add ground pin
     gndpin = toplevel_stacked << rename_ports_by_orientation(rectangle(size=(5,3),layer=pdk.get_glayer("met4"),centered=True))
