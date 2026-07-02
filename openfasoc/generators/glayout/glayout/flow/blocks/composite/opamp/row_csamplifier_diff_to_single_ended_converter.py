@@ -78,9 +78,12 @@ def row_csamplifier_diff_to_single_ended_converter(pdk: MappedPDK, diff_to_singl
     pmos_comps.add(topptap)
     pmos_comps.add_ports(topptap.get_ports_list(),prefix="top_ptap_")
     # vdd taprings of the center components
-    pmos_comps << straight_route(pdk, pmos_comps.ports["ptopAB_L_welltap_W_top_met_W"],pmos_comps.ports["halfpspecialmarker_L_tie_E_top_met_N"],width=2,glayer1="met2",via1_alignment=('c','c'),fullbottom=True)
-    pmos_comps << straight_route(pdk, pmos_comps.ports["ptopAB_R_welltap_E_top_met_E"],pmos_comps.ports["halfpspecialmarker_R_tie_W_top_met_N"],width=2,glayer1="met2",via1_alignment=('c','c'),fullbottom=True)
-    pmos_comps << straight_route(pdk, pmos_comps.ports["pbottomAB_L_welltap_W_top_met_W"],pmos_comps.ports["halfpspecialmarker_L_tie_E_top_met_W"],width=2,glayer1="met2",via1_alignment=('c','c'),via2_alignment=('c','c'),fullbottom=True)
-    pmos_comps << straight_route(pdk, pmos_comps.ports["pbottomAB_R_welltap_E_top_met_E"],pmos_comps.ports["halfpspecialmarker_R_tie_W_top_met_E"],width=2,glayer1="met2",via1_alignment=('c','c'),via2_alignment=('c','c'),fullbottom=True)
+    # bulk-tie straps (welltap ring -> CS tie ring, ~zero DC current): width=1 rather
+    # than 2 -- the fat body/fullbottom pads of the width-2 version passed within
+    # 0.25um of the CS fet's met2 below on gf180 (M2.2a needs 0.28).
+    pmos_comps << straight_route(pdk, pmos_comps.ports["ptopAB_L_welltap_W_top_met_W"],pmos_comps.ports["halfpspecialmarker_L_tie_E_top_met_N"],width=1,glayer1="met2",via1_alignment=('c','c'),fullbottom=True)
+    pmos_comps << straight_route(pdk, pmos_comps.ports["ptopAB_R_welltap_E_top_met_E"],pmos_comps.ports["halfpspecialmarker_R_tie_W_top_met_N"],width=1,glayer1="met2",via1_alignment=('c','c'),fullbottom=True)
+    pmos_comps << straight_route(pdk, pmos_comps.ports["pbottomAB_L_welltap_W_top_met_W"],pmos_comps.ports["halfpspecialmarker_L_tie_E_top_met_W"],width=1,glayer1="met2",via1_alignment=('c','c'),via2_alignment=('c','c'),fullbottom=True)
+    pmos_comps << straight_route(pdk, pmos_comps.ports["pbottomAB_R_welltap_E_top_met_E"],pmos_comps.ports["halfpspecialmarker_R_tie_W_top_met_E"],width=1,glayer1="met2",via1_alignment=('c','c'),via2_alignment=('c','c'),fullbottom=True)
     return pmos_comps
 

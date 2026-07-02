@@ -110,6 +110,7 @@ def diff_pair_ibias(
             length=0.5,
             sd_route_topmet="met2",
             gate_route_topmet="met1",
+            inter_finger_topmet=inter_finger_topmet,
         ).copy()
         antenna_diode_comp << straight_route(
             pdk,

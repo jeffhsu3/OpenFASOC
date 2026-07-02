@@ -29,7 +29,12 @@ def __create_sharedgatecomps(pdk: MappedPDK, rmult: int, half_pload: tuple[float
     # create the 2*2 multiplier transistors (placed twice later)
     twomultpcomps = Component("2 multiplier shared gate comps")
     pcompR = multiplier(pdk, "p+s/d", width=half_pload[0], length=half_pload[1], fingers=half_pload[2], dummy=True,rmult=rmult,inter_finger_topmet=inter_finger_topmet).copy()
-    tapref = pcompR << tapring(pdk, evaluate_bbox(pcompR,padding=0.3+pdk.get_grule("n+s/d", "active_tap")["min_enclosure"]),"n+s/d","met1","met1")
+    # ring-met1 <-> FET-met1 clearance: the legacy 0.3 base was sized for sky130
+    # (met1 min_separation 0.14). Express it as met1_minsep + 0.16 so PDKs with a
+    # larger met1 spacing rule get the extra room (gf180: 0.23 -> ring sat 0.155
+    # from the FET met1 straps, M1.2a). sky130 geometry is unchanged (0.14+0.16=0.30).
+    tapring_pad = pdk.get_grule("met1")["min_separation"] + 0.16 + pdk.get_grule("n+s/d", "active_tap")["min_enclosure"]
+    tapref = pcompR << tapring(pdk, evaluate_bbox(pcompR,padding=tapring_pad),"n+s/d","met1","met1")
     pcompR.add_padding(layers=(pdk.get_glayer("nwell"),), default=pdk.get_grule("active_tap", "nwell")["min_enclosure"])
     pcompR.add_ports(tapref.get_ports_list(),prefix="welltap_")
     pcompR << straight_route(pdk,pcompR.ports["dummy_L_gsdcon_top_met_W"],pcompR.ports["welltap_W_top_met_W"],glayer2="met1")
@@ -134,11 +139,20 @@ def __route_sharedgatecomps(pdk: MappedPDK, shared_gate_comps, via_location, pto
         pcomps_route_B_source_extension += ptop_AB.ports["R_source_E"].center[0] - LRdrainsPorts[-1].center[0]
     shared_gate_comps << c_route(pdk, LRdrainsPorts[-1], set_port_orientation(bottom_pcompB_floating_port,"E"),extension=pcomps_route_B_source_extension,viaoffset=(True,False))
     pmos_bsource_2Rdrain_v_center = via_stack(pdk,"met2","met3",fulltop=True)
-    shared_gate_comps.add(align_comp_to_port(pmos_bsource_2Rdrain_v_center, bottom_pcompB_floating_port,('r','t')))
+    # center the via on the route rather than top-aligning it: 't' made the met2 pad
+    # poke 0.25 above the B-source route, leaving only 0.225 to the met2 gate-short
+    # bar above (gf180 M2.2a needs 0.28). Centered, the pad stays flush with the
+    # route (same met2/met3 connectivity) and clears the bar by ~0.475.
+    shared_gate_comps.add(align_comp_to_port(pmos_bsource_2Rdrain_v_center, bottom_pcompB_floating_port,('r','c')))
     # connect drain of B to each other directly over where the diffpair top left drain will be
     pmos_bdrain_diffpair_v = shared_gate_comps << via_stack(pdk, "met2","met5",fullbottom=True)
     pmos_bdrain_diffpair_v = align_comp_to_port(pmos_bdrain_diffpair_v, movex(pbottom_AB.ports["L_gate_S"].copy(),destination=via_location))
-    pmos_bdrain_diffpair_v.movey(0-_max_metal_seperation_ps)
+    # the via's met2 pad reaches ~0.075 above the alignment point, so one
+    # max_metal_seperation left only 0.225 to the met2 gate-short bar on gf180
+    # (M2.2a needs 0.28). Add the deficit for PDKs with met2 min_separation > 0.24;
+    # sky130 (0.14) gets extra=0 and is unchanged.
+    extra_bdrain_drop = pdk.snap_to_2xgrid(max(0, pdk.get_grule("met2")["min_separation"] - 0.24))
+    pmos_bdrain_diffpair_v.movey(0-_max_metal_seperation_ps-extra_bdrain_drop)
     pcomps_route_B_drain_extension = shared_gate_comps.xmax-ptop_AB.ports["R_drain_E"].center[0]+_max_metal_seperation_ps
     shared_gate_comps << c_route(pdk, ptop_AB.ports["R_drain_E"], pmos_bdrain_diffpair_v.ports["bottom_met_E"],extension=pcomps_route_B_drain_extension +_max_metal_seperation_ps)
     shared_gate_comps << c_route(pdk, pbottom_AB.ports["L_drain_W"], pmos_bdrain_diffpair_v.ports["bottom_met_W"],extension=pcomps_route_B_drain_extension +_max_metal_seperation_ps)
