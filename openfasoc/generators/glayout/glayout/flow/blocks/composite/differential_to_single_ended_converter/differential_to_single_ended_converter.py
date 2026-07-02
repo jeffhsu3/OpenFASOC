@@ -102,8 +102,16 @@ def __route_sharedgatecomps(pdk: MappedPDK, shared_gate_comps, via_location, pto
     # connect p+s/d layer of the transistors
     shared_gate_comps << route_quad(LRplusdopedPorts[0],LRplusdopedPorts[-1],layer=pdk.get_glayer("p+s/d"))
     # connect drain of the left 2 and right 2, short sources of all 4
-    shared_gate_comps << route_quad(LRdrainsPorts[0],LRdrainsPorts[3],layer=LRdrainsPorts[0].layer)
-    shared_gate_comps << route_quad(LRdrainsPorts[4],LRdrainsPorts[7],layer=LRdrainsPorts[0].layer)
+    # drain (V1/VSS2) bars: pull the INNER ends back one met2 spacing -- the
+    # route_quad otherwise ends flush against the AB units' met2 drain rails at
+    # x=+-5.7 (edge-touching metal = magic merges the nets: V1 shorted to wire1,
+    # LVS "netlists do not match"). The pulled end still overlaps its own unit's
+    # ~0.46-wide sd rail, so connectivity is unchanged.
+    _pull = pdk.snap_to_2xgrid(pdk.get_grule("met2")["min_separation"] + 0.02)
+    _in3 = LRdrainsPorts[3].copy(); _in3.center = (_in3.center[0] - _pull, _in3.center[1])
+    _in4 = LRdrainsPorts[4].copy(); _in4.center = (_in4.center[0] + _pull, _in4.center[1])
+    shared_gate_comps << route_quad(LRdrainsPorts[0],_in3,layer=LRdrainsPorts[0].layer)
+    shared_gate_comps << route_quad(_in4,LRdrainsPorts[7],layer=LRdrainsPorts[0].layer)
     shared_gate_comps << route_quad(LRsourcesPorts[0],LRsourcesPorts[-1],layer=LRsourcesPorts[0].layer)
     pcomps_2L_2R_sourcevia = shared_gate_comps << via_stack(pdk,pdk.layer_to_glayer(LRsourcesPorts[0].layer), "met4")
     pcomps_2L_2R_sourcevia.movey(evaluate_bbox(pcomps_2L_2R_sourcevia.parent.extract(layers=[LRsourcesPorts[0].layer,]))[1]/2 + LRsourcesPorts[0].center[1])
@@ -155,7 +163,15 @@ def __route_sharedgatecomps(pdk: MappedPDK, shared_gate_comps, via_location, pto
     pmos_bdrain_diffpair_v.movey(0-_max_metal_seperation_ps-extra_bdrain_drop)
     pcomps_route_B_drain_extension = shared_gate_comps.xmax-ptop_AB.ports["R_drain_E"].center[0]+_max_metal_seperation_ps
     shared_gate_comps << c_route(pdk, ptop_AB.ports["R_drain_E"], pmos_bdrain_diffpair_v.ports["bottom_met_E"],extension=pcomps_route_B_drain_extension +_max_metal_seperation_ps)
-    shared_gate_comps << c_route(pdk, pbottom_AB.ports["L_drain_W"], pmos_bdrain_diffpair_v.ports["bottom_met_W"],extension=pcomps_route_B_drain_extension +_max_metal_seperation_ps)
+    # lift the WEST B-drain leg to met3: on met2 it ran from pbottom_AB.L's drain
+    # straight through the met2 route_quad bar (above) that shorts the center-row
+    # (TOP) drains -- node V1 -- so magic extracted V1 and wire1 as ONE net (LVS
+    # "netlists do not match"). met3 is ALSO taken there (the gate c_route cons at
+    # x~+-19, wire0), so lift to met4; e2glayer="met4" lands on the B-drain via
+    # stack's internal met4 pad.
+    bdrain_l_lift = shared_gate_comps << via_stack(pdk, "met2", "met4")
+    align_comp_to_port(bdrain_l_lift, pbottom_AB.ports["L_drain_W"])
+    shared_gate_comps << c_route(pdk, set_port_orientation(bdrain_l_lift.ports["top_met_W"], "W"), pmos_bdrain_diffpair_v.ports["bottom_met_W"], e2glayer="met4", extension=pcomps_route_B_drain_extension +_max_metal_seperation_ps)
     shared_gate_comps.add_ports(pmos_bdrain_diffpair_v.get_ports_list(),prefix="minusvia_")
     shared_gate_comps.add_ports(mimcap_connection_ref.get_ports_list(),prefix="mimcap_connection_")
     return shared_gate_comps
