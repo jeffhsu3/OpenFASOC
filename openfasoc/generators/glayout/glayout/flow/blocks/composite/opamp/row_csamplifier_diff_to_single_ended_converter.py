@@ -65,6 +65,13 @@ def row_csamplifier_diff_to_single_ended_converter(pdk: MappedPDK, diff_to_singl
         label = "L_" if direction==-1 else "R_"
         # this special marker is used to rename these ports in the opamp to commonsource_Pamp_
         pmos_comps.add_ports(halfMultp_ref.get_ports_list(),prefix="halfpspecialmarker_"+label)
+        # tie the CS pmos nwell ring to its own SOURCE (VDD): without this the nwell
+        # taps (and the pload welltap rings strapped to them) extract as a floating
+        # well net while the source netlist has B=VDD -> LVS net/pin mismatch.
+        # Route INWARD (source -> ring inner E/W segment, diff_pair dummy-strap idiom):
+        # an outward c_route grew the cell bbox, which resized the topptap ring and
+        # left met1 slivers at its corners (sky130 met1.2 regression).
+        pmos_comps << straight_route(pdk, halfMultp_ref.ports["multiplier_0_source_E" if direction==1 else "multiplier_0_source_W"], halfMultp_ref.ports["tie_E_top_met_W" if direction==1 else "tie_W_top_met_E"])
 
         __connect_cs_netlist(pmos_comps, halfMultp)
 

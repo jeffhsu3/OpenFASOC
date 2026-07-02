@@ -68,7 +68,11 @@ def __create_and_route_pins(
     vbias1 = opamp_top << rectangle(size=(5,3),layer=pdk.get_glayer("met3"),centered=True)
     vbias1.movey(opamp_top.ymin - _max_metal_seperation_ps - vbias1.ymax)
     opamp_top << straight_route(pdk, vbias1.ports["e2"], opamp_top.ports["diffpair_ibias_B_gate_S"],width=1,fullbottom=False)
-    vbias2 = opamp_top << rectangle(size=(5,3),layer=pdk.get_glayer("met5"),centered=True)
+    # vbias2 (CS_BIAS pin) on met4, NOT met5: the L_route's horizontal leg inherits
+    # this layer, and on met5 it crossed the met5 VOUT riser (output->mimcap) on the
+    # SAME layer at compact (LP) sizings -- magic extracted VOUT and CS_BIAS as one
+    # net (a real short). On met4 the leg passes under the riser; vias auto-inserted.
+    vbias2 = opamp_top << rectangle(size=(5,3),layer=pdk.get_glayer("met4"),centered=True)
     vbias2.movex(1+opamp_top.xmax+evaluate_bbox(vbias2)[0]+pdk.util_max_metal_seperation()).movey(opamp_top.ymin+vbias2.ymax)
     opamp_top << L_route(pdk, halfmultn_gate_routeref.ports["con_E"], vbias2.ports["e2"],hwidth=2)
     # route + and - pins (being careful about antenna violations)
