@@ -20,7 +20,10 @@ from gdsfactory.component import Component
 from glayout.flow.pdk.mappedpdk import MappedPDK
 from glayout.flow.pdk.util.comp_utils import evaluate_bbox
 from glayout.flow.pdk.util.snap_to_grid import component_snap_to_grid
+from gdsfactory.components.rectangle import rectangle
 from glayout.flow.routing.smart_route import smart_route
+from glayout.flow.routing.straight_route import straight_route
+from glayout.flow.primitives.via_gen import via_stack
 from glayout.flow.spice.netlist import Netlist
 from glayout.flow.blocks.composite.opamp.opamp import opamp
 
@@ -67,27 +70,94 @@ def diff_buffer(pdk: MappedPDK, gap: float = 10.0) -> Component:
     nref = top << opa                          # n-rail (right)
     nref.movex(pref.xmax + gap - nref.xmin)
 
+    # EXPLICIT routing only -- smart_route repeatedly plowed through the opamp
+    # interior here (merged nets, LVS "netlists do not match"). All paths below are
+    # controlled: same-layer straight_routes between copied ports + explicit
+    # via_stacks (the auto-layer inference of L_route/straight_route is avoided
+    # for the same reason).
     routed, failed = [], []
 
-    def route(net, ra, pa, rb, pb):
-        try:
-            top << smart_route(pdk, ra.ports[pa], rb.ports[pb], ra, rb)
-            routed.append(net)
-        except Exception as e:  # noqa: BLE001
-            failed.append((net, type(e).__name__))
+    # (1)(2) unity-feedback FB: netlist node VP = the feedback side in the ngspice-
+    # validated follower = LAYOUT port pin_minus (netgen pin binding on the
+    # standalone opamp; feeding back to pin_plus would be POSITIVE feedback).
+    # Path: met3 east at the pin_minus y (this band holds only the minus-input's
+    # own routing and the VOUT-net n-to-p cons -- same nets), then an explicit
+    # met3->met5 via landing on the VOUT riser.
+    # ... on MET4: the met3 band at the pin_minus y also carries the PLUS input's
+    # met3 riser (x~8-11) -- a met3 run shorted VOUT to VINP. Both inputs' met4
+    # antenna hops are same-net or at a different y, so met4 is clear.
+    for ref_ in (pref, nref):
+        fb_lift = top << via_stack(pdk, "met3", "met4")
+        fb_lift.movex(ref_.ports["pin_minus_E"].center[0] - 0.6 - fb_lift.center[0])
+        fb_lift.movey(ref_.ports["pin_minus_E"].center[1] - fb_lift.center[1])
+        fbv = top << via_stack(pdk, "met4", "met5")
+        fbv.movex(ref_.ports["commonsource_output_E"].center[0] - fbv.center[0])
+        fbv.movey(ref_.ports["pin_minus_E"].center[1] - fbv.center[1])
+        fb_a = fb_lift.ports["top_met_E"].copy()
+        fb_b = fb_a.copy(); fb_b.center = (fbv.center[0], fb_a.center[1])
+        top << straight_route(pdk, fb_a, fb_b, glayer1="met4", glayer2="met4", width=1)
+    routed += ["FB_P", "FB_N"]
 
-    # per-opamp unity-follower feedback short: VP (pin_plus) -> VOUT (commonsource_output)
-    route("FB_P", pref, "pin_plus_E", pref, "commonsource_output_E")
-    route("FB_N", nref, "pin_plus_E", nref, "commonsource_output_E")
-    # tie shared rails between the two opamps
-    route("VDD", pref, "pin_vdd_E", nref, "pin_vdd_W")
-    route("VSS", pref, "pin_gnd_E", nref, "pin_gnd_W")
-    route("VDP_BIAS", pref, "pin_diffpairibias_E", nref, "pin_diffpairibias_W")
-    route("VCS_BIAS", pref, "pin_commonsourceibias_E", nref, "pin_commonsourceibias_W")
+    # (3) VDD OVER THE TOP on MET5: met4 is blocked twice up here -- a straight run
+    # at the pin y crossed the mimcap-connection legs (comp node), and the summit
+    # carries the fullbottom met4 VOUT drain-con bar spanning x=+-34.8 directly
+    # above the vdd pin (a met4 vertical merged VDD with VOUT). met5 is empty at
+    # the summit: via met4->met5 inside each vdd pin, met5 up/over/down.
+    # raw rectangles for the met5 runs -- straight_route misdrew here (wrong layer
+    # and direction), the sixth auto-router failure in this cell.
+    def _bar(x0, y0, x1, y1, glayer):
+        _r = top << rectangle(size=(round(x1 - x0, 3), round(y1 - y0, 3)), layer=pdk.get_glayer(glayer), centered=True)
+        _r.movex((x0 + x1) / 2 - _r.center[0]).movey((y0 + y1) / 2 - _r.center[1])
+    _y_high = max(pref.ymax, nref.ymax) + 1.0
+    _vups = []
+    for ref_ in (pref, nref):
+        _pin_c = ref_.ports["pin_vdd_N"].copy()
+        _pin_c.center = (_pin_c.center[0], _pin_c.center[1] - 1.5)  # inside the 5x3 pin rect
+        _vv = top << via_stack(pdk, "met4", "met5")
+        _vv.movex(_pin_c.center[0] - _vv.center[0]).movey(_pin_c.center[1] - _vv.center[1])
+        _vups.append(_vv)
+        _bar(_vv.center[0] - 0.5, _vv.center[1], _vv.center[0] + 0.5, _y_high, "met5")
+    _bar(_vups[0].center[0] - 0.5, _y_high - 1.0, _vups[1].center[0] + 0.5, _y_high, "met5")
+    # (4) VSS on MET3: a met4 run crossed the mimcap-connection c_route's fullbottom
+    # met4 legs at x~56-71 (shorting VSS into the compensation node and breaking the
+    # cap extraction). The met3 band here only crosses the opamp's own gnd legs
+    # (same net). Explicit met3->met4 vias inside each gnd pin rect.
+    _gva = top << via_stack(pdk, "met3", "met4")
+    _gva.movex(pref.ports["pin_gnd_E"].center[0] - 0.6 - _gva.center[0])
+    _gva.movey(pref.ports["pin_gnd_E"].center[1] - _gva.center[1])
+    _gvb = top << via_stack(pdk, "met3", "met4")
+    _gvb.movex(nref.ports["pin_gnd_W"].center[0] + 0.6 - _gvb.center[0])
+    _gvb.movey(nref.ports["pin_gnd_W"].center[1] - _gvb.center[1])
+    _ga = _gva.ports["bottom_met_E"].copy()
+    _gb = _ga.copy(); _gb.center = (_gvb.center[0], _ga.center[1])
+    top << straight_route(pdk, _ga, _gb, glayer1="met3", glayer2="met3", width=2)
+    # (5) VDP_BIAS: met3 rects at the same y -- straight met3 (crosses the met4
+    # vbias2 pin and cap plates on a different layer).
+    top << straight_route(pdk, pref.ports["pin_diffpairibias_E"], nref.ports["pin_diffpairibias_W"], glayer1="met3", glayer2="met3", width=2)
+    routed += ["VDD", "VSS", "VDP_BIAS"]
+
+    # (6) VCS_BIAS: the pins are met4 at the caps' y -- a met4 run would short the
+    # mimcap met4 bottom plates (and violate MIMTM.1). Drop each pin to met3 and
+    # run met3 BELOW both cells (clear of the met3 vbias1/dpbias rects), then up.
+    # vertical drop on MET4 (a met3 vertical would cross the VDP_BIAS met3 rail at
+    # the same y); the long horizontal runs on met3 BELOW both cells.
+    _y_low = min(pref.ymin, nref.ymin) - 2.0
+    _lowvias = []
+    for ref_ in (pref, nref):
+        _pin = ref_.ports["pin_commonsourceibias_S"]
+        _d = _pin.copy(); _d.center = (_pin.center[0], _y_low)
+        top << straight_route(pdk, _pin, _d, glayer1="met4", glayer2="met4", width=1)
+        _lv = top << via_stack(pdk, "met3", "met4")
+        _lv.movex(_pin.center[0] - _lv.center[0]).movey(_y_low + 0.4 - _lv.center[1])
+        _lowvias.append(_lv)
+    _ha = _lowvias[0].ports["bottom_met_E"].copy()
+    _hb = _ha.copy(); _hb.center = (_lowvias[1].center[0], _ha.center[1])
+    top << straight_route(pdk, _ha, _hb, glayer1="met3", glayer2="met3", width=1)
+    routed += ["VCS_BIAS"]
 
     # expose clean-named buffer pins (composable + labelable for LVS)
-    top.add_port(name="VINP", port=pref.ports["pin_minus_W"])
-    top.add_port(name="VINN", port=nref.ports["pin_minus_E"])
+    top.add_port(name="VINP", port=pref.ports["pin_plus_W"])
+    top.add_port(name="VINN", port=nref.ports["pin_plus_E"])
     top.add_port(name="VOUTP", port=pref.ports["commonsource_output_E"])
     top.add_port(name="VOUTN", port=nref.ports["commonsource_output_E"])
     top.add_port(name="VDP_BIAS", port=pref.ports["pin_diffpairibias_W"])
