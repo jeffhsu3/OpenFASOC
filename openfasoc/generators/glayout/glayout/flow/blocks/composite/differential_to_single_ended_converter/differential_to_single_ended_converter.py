@@ -132,15 +132,30 @@ def __route_sharedgatecomps(pdk: MappedPDK, shared_gate_comps, via_location, pto
     # connect source of A to the drain of 2L
     pcomps_route_A_drain_extension = shared_gate_comps.xmax-max(ptop_AB.ports["R_drain_E"].center[0], LRdrainsPorts[-1].center[0])+_max_metal_seperation_ps
     pcomps_route_A_drain = shared_gate_comps << c_route(pdk, ptop_AB.ports["L_drain_W"], LRdrainsPorts[0], extension=pcomps_route_A_drain_extension)
-    row_rectangle_routing = rectangle(layer=ptop_AB.ports["L_drain_W"].layer,size=(pbottom_AB.ports["R_source_N"].width,pbottom_AB.ports["R_source_W"].width)).copy()
-    Aextra_top_connection = align_comp_to_port(row_rectangle_routing, pbottom_AB.ports["R_source_N"], ('c','t')).movey(row_rectangle_routing.ymax + _max_metal_seperation_ps)
-    shared_gate_comps.add(Aextra_top_connection)
-    shared_gate_comps << straight_route(pdk,Aextra_top_connection.ports["e4"],pbottom_AB.ports["R_drain_N"])
-    shared_gate_comps << L_route(pdk,pcomps_route_A_drain.ports["con_S"], Aextra_top_connection.ports["e1"],viaoffset=(False,True))
+    # V1 -> pbottom_AB.R drain jumper, entirely on MET4 with EXPLICIT end vias.
+    # At compact sizings there is NO legal met2 corridor here: the old met2 Aextra
+    # pad ("msep above the source rail") overlapped the drain rail top by 0.02um --
+    # magic merged V1 with wire1 (LVS mismatch) -- and the gap up to the center
+    # tapring met2 pads is only ~0.31um; met3 is blocked by the pcenter gate cons.
+    # The rail-end via sits at the rail's EAST end (outside the congested band).
+    _v1_rail_via = shared_gate_comps << via_stack(pdk, "met2", "met4")
+    align_comp_to_port(_v1_rail_via, pbottom_AB.ports["R_drain_E"])
+    _v1_con_via = shared_gate_comps << via_stack(pdk, "met3", "met4")
+    align_comp_to_port(_v1_con_via, pcomps_route_A_drain.ports["con_S"])
+    # met4 L-path: east from the con to the rail-end x, then down to the rail via
+    _elbow = _v1_con_via.ports["top_met_E"].copy()
+    _elbow.center = (_v1_rail_via.ports["top_met_N"].center[0], _elbow.center[1])
+    shared_gate_comps << straight_route(pdk, _v1_con_via.ports["top_met_E"], _elbow, glayer1="met4", glayer2="met4")
+    _drop = _v1_rail_via.ports["top_met_N"].copy()
+    _drop.center = (_drop.center[0], _v1_con_via.ports["top_met_E"].center[1])
+    shared_gate_comps << straight_route(pdk, _v1_rail_via.ports["top_met_N"], _drop, glayer1="met4", glayer2="met4")
     # connect source of B to drain of 2R
     pcomps_route_B_source_extension = shared_gate_comps.xmax-max(LRsourcesPorts[-1].center[0],ptop_AB.ports["R_source_E"].center[0])+_max_metal_seperation_ps
     mimcap_connection_ref = shared_gate_comps << c_route(pdk, ptop_AB.ports["R_source_E"], LRdrainsPorts[-1],extension=pcomps_route_B_source_extension,viaoffset=(True,False))
-    bottom_pcompB_floating_port = set_port_orientation(movey(movex(pbottom_AB.ports["L_source_E"].copy(),5*_max_metal_seperation_ps), destination=Aextra_top_connection.ports["e1"].center[1]+Aextra_top_connection.ports["e1"].width+_max_metal_seperation_ps),"S")
+    # (was: positioned off Aextra_top_connection, which is now the explicit met4
+    # jumper above -- reproduce the same y: source_N + half pad + pad + 2*msep)
+    _b_float_y = pbottom_AB.ports["R_source_N"].center[1] + 1.5*pbottom_AB.ports["R_source_W"].width + 2*_max_metal_seperation_ps
+    bottom_pcompB_floating_port = set_port_orientation(movey(movex(pbottom_AB.ports["L_source_E"].copy(),5*_max_metal_seperation_ps), destination=_b_float_y),"S")
     pmos_bsource_2Rdrain_v = shared_gate_comps << L_route(pdk,pbottom_AB.ports["L_source_E"],bottom_pcompB_floating_port,vglayer="met3")
     # fix the extension when the top row of transistors extends farther than the middle row
     if LRdrainsPorts[-1].center[0] < ptop_AB.ports["R_source_E"].center[0]:
