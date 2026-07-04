@@ -103,8 +103,12 @@ def  transmission_gate(
     kwargs.setdefault("inter_finger_topmet", "met1")
 
     #two fets
-    nfet = nmos(pdk, width=width[0], fingers=fingers[0], multipliers=multipliers[0], with_dummy=True, with_dnwell=False,  with_substrate_tap=False, length=length[0], **kwargs)
-    pfet = pmos(pdk, width=width[1], fingers=fingers[1], multipliers=multipliers[1], with_dummy=True, with_substrate_tap=False, length=length[1], **kwargs)
+    # tie_layers is an explicit named param, so it is NOT in **kwargs -- it must be
+    # forwarded or it is silently dropped (the fets would always use fet.py's own
+    # default). Forwarding the TG default ("met2","met1") == fet.py's default, so
+    # existing callers are byte-for-byte unchanged.
+    nfet = nmos(pdk, width=width[0], fingers=fingers[0], multipliers=multipliers[0], with_dummy=True, with_dnwell=False,  with_substrate_tap=False, length=length[0], tie_layers=tie_layers, **kwargs)
+    pfet = pmos(pdk, width=width[1], fingers=fingers[1], multipliers=multipliers[1], with_dummy=True, with_substrate_tap=False, length=length[1], tie_layers=tie_layers, **kwargs)
     nfet_ref = top_level << nfet
     pfet_ref = top_level << pfet 
     pfet_ref = rename_ports_by_orientation(pfet_ref.mirror_y())
