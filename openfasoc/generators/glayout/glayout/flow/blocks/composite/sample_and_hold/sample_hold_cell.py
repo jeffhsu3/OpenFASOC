@@ -86,6 +86,12 @@ def sample_hold_cell(
         fingers=switch_fingers,
         multipliers=switch_multipliers,
         inter_finger_topmet="met1",
+        # single-layer guard rings (matches taped-out gf180 practice, e.g. MPW18H1:
+        # met1-only inside device cells): the corner L_routes collapse to plain
+        # same-layer metal, giving an effectively CONTIGUOUS ring, and met2 stays
+        # free to cross on all four sides. Requires the tie_layers passthrough fix
+        # in transmission_gate (477ce2d8; it was silently dropped before).
+        tie_layers=("met1", "met1"),
     )
     tg_ref = top_level << tg_comp
 
@@ -117,6 +123,7 @@ def sample_hold_cell(
             inter_finger_topmet="met1",
             sd_route_topmet="met2",
             gate_route_topmet="met2",
+            tie_layers=("met1", "met1"),  # see TG note above
         )
         rst_ref = top_level << rst_comp
         place_left_of(rst_ref, mim_ref)
