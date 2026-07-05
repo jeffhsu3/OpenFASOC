@@ -182,7 +182,9 @@ def differential_delay_stage(pdk: MappedPDK, gap: float = 12.0) -> Component:
         top << straight_route(pdk, v.ports["bottom_met_N"], dest, glayer1="met2", glayer2="met2")
         top.add_port(name=name, port=gf.Port(name=name, center=(float(port.center[0]), float(ytop)),
                      width=dest.width, orientation=90, layer=dest.layer))
-        top.add_label(text=name, position=(float(port.center[0]), float(ytop)),
+        # nudge the label INSIDE the riser metal: an exactly-on-edge label is
+        # missed by magic `port makeall` (no LEF PIN -> unroutable macro pin)
+        top.add_label(text=name, position=(float(port.center[0]), float(ytop) - 0.2),
                       layer=pdk.get_glayer("met2"))
 
     # West landing-pad egress for the S/H pins. The S/H pins are bare ~0.5um met2 taps buried
