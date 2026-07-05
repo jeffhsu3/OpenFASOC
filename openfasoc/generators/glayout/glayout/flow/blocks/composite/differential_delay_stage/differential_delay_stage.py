@@ -239,27 +239,11 @@ def differential_delay_stage(pdk: MappedPDK, gap: float = 12.0) -> Component:
     expose_up("VDD", bref.ports["VDD"])            # interior supply -> route up to top edge
     expose("VDP_BIAS", bref.ports["VDP_BIAS"])     # already at the bottom edge
 
+    # component_snap_to_grid strips the S/H instances' flattened-in internal
+    # labels generically (labels are cell-local; duplicate texts on different
+    # nets would otherwise short BY NAME in magic) -- only the stage's own pin
+    # labels above survive.
     comp = component_snap_to_grid(top)
-    # component_snap_to_grid FLATTENS the stage, so both S/H instances' internal
-    # expose labels land in ONE cell with identical text on DIFFERENT nets -- and
-    # magic unions same-named labels into one node: VIN(p)+VIN(n) and VOUT(p)+
-    # VOUT(n) merged BY NAME, making the TG pairs extract as parallel devices.
-    # Strip ALL flattened-in S/H label texts (not just the differently-netted
-    # ones) so label aliasing can never stand in for missing metal: the stage's
-    # own labels (VINP/VINN/CLK/...) are the only net names left.
-    _sh_texts = {"VIN", "VOUT", "VOUT_TAP", "CLK", "CLK_B", "VSS", "VCC", "VZERO", "VRESET"}
-    _keep_pos = {(round(float(p.center[0]), 3), round(float(p.center[1]), 3), p.name)
-                 for p in comp.ports.values()}
-    # gdstk Cell.labels returns a FRESH list each access -- list.remove() mutates
-    # a temporary. Collect and remove via gdstk Cell.remove().
-    _drop = []
-    for _l in comp.labels:
-        if _l.text in _sh_texts:
-            _pos = (round(float(_l.origin[0]), 3), round(float(_l.origin[1]), 3), _l.text)
-            if _pos not in _keep_pos:
-                _drop.append(_l)
-    if _drop:
-        comp._cell.remove(*_drop)
     comp.info["netlist"] = _stage_netlist(sh, buf)
     comp.info["routed"] = routed
     comp.info["route_failed"] = failed
