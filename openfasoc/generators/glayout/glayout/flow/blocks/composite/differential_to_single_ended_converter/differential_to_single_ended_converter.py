@@ -50,8 +50,12 @@ def __create_sharedgatecomps(pdk: MappedPDK, rmult: int, half_pload: tuple[float
     relative_dim_comp = multiplier(
         pdk, "p+s/d", width=half_pload[0], length=half_pload[1], fingers=4, dummy=False, rmult=rmult, inter_finger_topmet=inter_finger_topmet
     )
-    # TODO: figure out single dim spacing rule then delete both test delete and this
-    single_dim = to_decimal(relative_dim_comp.xmax) + to_decimal(0.11) + to_decimal(half_pload[1])/2
+    # Unit-to-unit diffusion clearance in the center row. The facing S/D ends of
+    # adjacent units are DIFFERENT nets (verified by net trace), so they must meet
+    # the diffusion spacing rule -- the old hardcoded 0.11 left a 0.17um gap on
+    # gf180 (DF.3a, min 0.28): the opamp's last remaining DRC violations.
+    _diff_sep = to_decimal(pdk.snap_to_2xgrid(pdk.get_grule("active_diff")["min_separation"] + 0.02))
+    single_dim = to_decimal(relative_dim_comp.xmax) + _diff_sep + to_decimal(half_pload[1])/2
     LRplusdopedPorts = list()
     LRgatePorts = list()
     LRdrainsPorts = list()
@@ -80,7 +84,10 @@ def __create_sharedgatecomps(pdk: MappedPDK, rmult: int, half_pload: tuple[float
         pref_ = prec_ref_center(pcenterfourunits).movex(pdk.snap_to_2xgrid(to_float(i * single_dim + extra_t)))
         shared_gate_comps.add(pref_)
         if appenddummy:
-            LRdummyports+= [pref_.ports["dummy_"+appenddummy+"_gsdcon_top_met_N"]]
+            # stash (reference, portname), NOT a port snapshot: the snapshot goes
+            # stale when frames shift before routing (the old tie straps misdrew
+            # from exactly this staleness)
+            LRdummyports += [(pref_, "dummy_" + appenddummy + "_gsdcon_top_met_N")]
         LRplusdopedPorts += [pref_.ports["plusdoped_W"] , pref_.ports["plusdoped_E"]]
         LRgatePorts += [pref_.ports["gate_W"],pref_.ports["gate_E"]]
         LRdrainsPorts += [pref_.ports["source_W"],pref_.ports["source_E"]]
@@ -96,9 +103,34 @@ def __create_sharedgatecomps(pdk: MappedPDK, rmult: int, half_pload: tuple[float
 
 def __route_sharedgatecomps(pdk: MappedPDK, shared_gate_comps, via_location, ptop_AB, pbottom_AB, LRplusdopedPorts, LRgatePorts, LRdrainsPorts, LRsourcesPorts,LRdummyports) -> Component:
     _max_metal_seperation_ps = pdk.util_max_metal_seperation()
-    # ground dummy transistors of the 4 center multipliers
-    shared_gate_comps << straight_route(pdk,LRdummyports[0],pbottom_AB.ports["L_welltap_N_top_met_S"],glayer2="met1")
-    shared_gate_comps << straight_route(pdk,LRdummyports[1],pbottom_AB.ports["R_welltap_N_top_met_S"],glayer2="met1")
+    # ground dummy transistors of the 4 center multipliers: explicit met1 bars
+    # from each outer dummy's gsdcon down onto the bottom AB row's welltap ring N
+    # segment. The old straight_routes (N-facing port, target BELOW) drew a
+    # degenerate floating fragment; the dummies only extracted as tied by
+    # geometric luck, which any center-row shift broke (dummy G=S=D became a
+    # floating island net -> netgen kept 2 extra "shorted" pfets, 16->18).
+    def _m1rect(x0, y0, x1, y1):
+        _r = shared_gate_comps << rectangle(size=(round(x1 - x0, 3), round(y1 - y0, 3)), layer=pdk.get_glayer("met1"), centered=True)
+        _r.movex((x0 + x1) / 2 - _r.center[0]).movey((y0 + y1) / 2 - _r.center[1])
+    for (_dref, _dpn), _wp in ((LRdummyports[0], "L_welltap_N_top_met_S"),
+                               (LRdummyports[1], "R_welltap_N_top_met_S")):
+        _dp = _dref.ports[_dpn]           # live lookup: final frame
+        _ring = pbottom_AB.ports[_wp]
+        _x = _dp.center[0]
+        _sgn = 1 if _x >= _ring.center[0] else -1
+        # narrow configs leave the dummy BEYOND the ring segment's outer end, so a
+        # straight drop can miss the metal entirely: drop to the segment's y band,
+        # then run ALONG the band inward far enough to overlap the segment
+        # (its x extent = port center +- width/2).
+        _seg_end = _ring.center[0] + _sgn * float(_ring.width) / 2
+        _yb0, _yb1 = _ring.center[1] - 0.23, _ring.center[1] + 0.23
+        _m1rect(_x - 0.23, _yb0, _x + 0.23, _dp.center[1] + 0.2)          # vertical drop, sunk into the band
+        if _sgn * (_x + 0.23) > _sgn * (_seg_end - _sgn * 0.2):
+            # segment ends short of the dummy (narrow configs): run along the
+            # band inward until we overlap the segment metal
+            _xin = _seg_end - _sgn * 0.5
+            _xs = sorted((_xin, _x + _sgn * 0.23))
+            _m1rect(_xs[0], _yb0, _xs[1], _yb1)
     # connect p+s/d layer of the transistors
     shared_gate_comps << route_quad(LRplusdopedPorts[0],LRplusdopedPorts[-1],layer=pdk.get_glayer("p+s/d"))
     # connect drain of the left 2 and right 2, short sources of all 4
