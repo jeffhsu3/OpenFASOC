@@ -14,14 +14,13 @@ VCS_BIAS (tied) for rail matching -- the top-level bias gen sources the total cu
 
 Ports: VINP VINN VOUTP VOUTN VDP_BIAS VCS_BIAS VDD VSS.
 """
+
 import re
 from gdsfactory.cell import cell
 from gdsfactory.component import Component
 from glayout.flow.pdk.mappedpdk import MappedPDK
-from glayout.flow.pdk.util.comp_utils import evaluate_bbox
 from glayout.flow.pdk.util.snap_to_grid import component_snap_to_grid
 from gdsfactory.components.rectangle import rectangle
-from glayout.flow.routing.smart_route import smart_route
 from glayout.flow.routing.straight_route import straight_route
 from glayout.flow.primitives.via_gen import via_stack
 from glayout.flow.spice.netlist import Netlist
@@ -33,31 +32,63 @@ from glayout.flow.blocks.composite.opamp.opamp import opamp
 # opt-in as the crossbar/S&H cells (see 82b72286). Layout-only; LVS netlist unchanged.
 # Verified: LP opamp gf180 magic DRC 106 -> 16 (M2.2a 186 -> 17); sky130 unchanged.
 LP = dict(
-    half_diffpair_params=(2, 1, 2), diffpair_bias=(2, 4, 2),
-    half_common_source_params=(3, 1, 4, 2), half_common_source_bias=(2, 4, 2, 2),
-    half_pload=(2, 1, 4), mim_cap_size=(6, 6), mim_cap_rows=1,
-    rmult=1, with_antenna_diode_on_diffinputs=2, add_output_stage=False,
+    half_diffpair_params=(2, 1, 2),
+    diffpair_bias=(2, 4, 2),
+    half_common_source_params=(3, 1, 4, 2),
+    half_common_source_bias=(2, 4, 2, 2),
+    half_pload=(2, 1, 4),
+    mim_cap_size=(6, 6),
+    mim_cap_rows=1,
+    rmult=1,
+    with_antenna_diode_on_diffinputs=2,
+    add_output_stage=False,
     inter_finger_topmet="met1",
+    tie_layers=("met1", "met1"),
+    # widen the diff pair's plus/minus gate-bar gap (default abuts at min_sep
+    # ~0.3um for ~20um): with the 4um input pin-rail lift in opamp_twostage
+    # this cuts the hold<->VOUT coupling that limit-cycled the S/H chain at ff
+    # (chipforge PEX_RC_SIMS.md sec 6)
+    diffpair_plus_minus_sep=1.5,
 )
 
 
 def units_fix(netlist: str) -> str:
     """Append 'u' to bare numeric l=/w= (generator omits the unit -> ngspice reads meters)."""
-    return "\n".join(re.sub(r'\b([lw])=(\d+\.?\d*)(?![u\d\.])', r'\1=\2u', ln)
-                     for ln in netlist.splitlines())
+    return "\n".join(
+        re.sub(r"\b([lw])=(\d+\.?\d*)(?![u\d\.])", r"\1=\2u", ln)
+        for ln in netlist.splitlines()
+    )
 
 
 def _diff_buffer_netlist(opa: Component) -> Netlist:
     nodes = ["VINP", "VINN", "VOUTP", "VOUTN", "VDP_BIAS", "VCS_BIAS", "VDD", "VSS"]
     net = Netlist(circuit_name="diff_buffer", nodes=nodes)
     # p-rail follower: VP=VOUTP (feedback), VN=VINP, VOUT=VOUTP
-    net.connect_netlist(opa.info["netlist"], [
-        ("VDD", "VDD"), ("GND", "VSS"), ("DIFFPAIR_BIAS", "VDP_BIAS"),
-        ("VP", "VOUTP"), ("VN", "VINP"), ("CS_BIAS", "VCS_BIAS"), ("VOUT", "VOUTP")])
+    net.connect_netlist(
+        opa.info["netlist"],
+        [
+            ("VDD", "VDD"),
+            ("GND", "VSS"),
+            ("DIFFPAIR_BIAS", "VDP_BIAS"),
+            ("VP", "VOUTP"),
+            ("VN", "VINP"),
+            ("CS_BIAS", "VCS_BIAS"),
+            ("VOUT", "VOUTP"),
+        ],
+    )
     # n-rail follower: VP=VOUTN (feedback), VN=VINN, VOUT=VOUTN
-    net.connect_netlist(opa.info["netlist"], [
-        ("VDD", "VDD"), ("GND", "VSS"), ("DIFFPAIR_BIAS", "VDP_BIAS"),
-        ("VP", "VOUTN"), ("VN", "VINN"), ("CS_BIAS", "VCS_BIAS"), ("VOUT", "VOUTN")])
+    net.connect_netlist(
+        opa.info["netlist"],
+        [
+            ("VDD", "VDD"),
+            ("GND", "VSS"),
+            ("DIFFPAIR_BIAS", "VDP_BIAS"),
+            ("VP", "VOUTN"),
+            ("VN", "VINN"),
+            ("CS_BIAS", "VCS_BIAS"),
+            ("VOUT", "VOUTN"),
+        ],
+    )
     return net
 
 
@@ -66,8 +97,8 @@ def diff_buffer(pdk: MappedPDK, gap: float = 10.0) -> Component:
     pdk.activate()
     opa = opamp(pdk, **LP)  # one body, placed twice (identical -> good rail matching)
     top = Component()
-    pref = top << opa                          # p-rail (left)
-    nref = top << opa                          # n-rail (right)
+    pref = top << opa  # p-rail (left)
+    nref = top << opa  # n-rail (right)
     nref.movex(pref.xmax + gap - nref.xmin)
 
     # EXPLICIT routing only -- smart_route repeatedly plowed through the opamp
@@ -94,7 +125,8 @@ def diff_buffer(pdk: MappedPDK, gap: float = 10.0) -> Component:
         fbv.movex(ref_.ports["commonsource_output_E"].center[0] - fbv.center[0])
         fbv.movey(ref_.ports["pin_minus_E"].center[1] - fbv.center[1])
         fb_a = fb_lift.ports["top_met_E"].copy()
-        fb_b = fb_a.copy(); fb_b.center = (fbv.center[0], fb_a.center[1])
+        fb_b = fb_a.copy()
+        fb_b.center = (fbv.center[0], fb_a.center[1])
         top << straight_route(pdk, fb_a, fb_b, glayer1="met4", glayer2="met4", width=1)
     routed += ["FB_P", "FB_N"]
 
@@ -106,18 +138,34 @@ def diff_buffer(pdk: MappedPDK, gap: float = 10.0) -> Component:
     # raw rectangles for the met5 runs -- straight_route misdrew here (wrong layer
     # and direction), the sixth auto-router failure in this cell.
     def _bar(x0, y0, x1, y1, glayer):
-        _r = top << rectangle(size=(round(x1 - x0, 3), round(y1 - y0, 3)), layer=pdk.get_glayer(glayer), centered=True)
+        _r = top << rectangle(
+            size=(round(x1 - x0, 3), round(y1 - y0, 3)),
+            layer=pdk.get_glayer(glayer),
+            centered=True,
+        )
         _r.movex((x0 + x1) / 2 - _r.center[0]).movey((y0 + y1) / 2 - _r.center[1])
+
     _y_high = max(pref.ymax, nref.ymax) + 1.0
     _vups = []
     for ref_ in (pref, nref):
         _pin_c = ref_.ports["pin_vdd_N"].copy()
-        _pin_c.center = (_pin_c.center[0], _pin_c.center[1] - 1.5)  # inside the 5x3 pin rect
+        _pin_c.center = (
+            _pin_c.center[0],
+            _pin_c.center[1] - 1.5,
+        )  # inside the 5x3 pin rect
         _vv = top << via_stack(pdk, "met4", "met5")
-        _vv.movex(_pin_c.center[0] - _vv.center[0]).movey(_pin_c.center[1] - _vv.center[1])
+        _vv.movex(_pin_c.center[0] - _vv.center[0]).movey(
+            _pin_c.center[1] - _vv.center[1]
+        )
         _vups.append(_vv)
         _bar(_vv.center[0] - 0.5, _vv.center[1], _vv.center[0] + 0.5, _y_high, "met5")
-    _bar(_vups[0].center[0] - 0.5, _y_high - 1.0, _vups[1].center[0] + 0.5, _y_high, "met5")
+    _bar(
+        _vups[0].center[0] - 0.5,
+        _y_high - 1.0,
+        _vups[1].center[0] + 0.5,
+        _y_high,
+        "met5",
+    )
     # (4) VSS on MET3: a met4 run crossed the mimcap-connection c_route's fullbottom
     # met4 legs at x~56-71 (shorting VSS into the compensation node and breaking the
     # cap extraction). The met3 band here only crosses the opamp's own gnd legs
@@ -129,11 +177,19 @@ def diff_buffer(pdk: MappedPDK, gap: float = 10.0) -> Component:
     _gvb.movex(nref.ports["pin_gnd_W"].center[0] + 0.6 - _gvb.center[0])
     _gvb.movey(nref.ports["pin_gnd_W"].center[1] - _gvb.center[1])
     _ga = _gva.ports["bottom_met_E"].copy()
-    _gb = _ga.copy(); _gb.center = (_gvb.center[0], _ga.center[1])
+    _gb = _ga.copy()
+    _gb.center = (_gvb.center[0], _ga.center[1])
     top << straight_route(pdk, _ga, _gb, glayer1="met3", glayer2="met3", width=2)
     # (5) VDP_BIAS: met3 rects at the same y -- straight met3 (crosses the met4
     # vbias2 pin and cap plates on a different layer).
-    top << straight_route(pdk, pref.ports["pin_diffpairibias_E"], nref.ports["pin_diffpairibias_W"], glayer1="met3", glayer2="met3", width=2)
+    top << straight_route(
+        pdk,
+        pref.ports["pin_diffpairibias_E"],
+        nref.ports["pin_diffpairibias_W"],
+        glayer1="met3",
+        glayer2="met3",
+        width=2,
+    )
     routed += ["VDD", "VSS", "VDP_BIAS"]
 
     # (6) VCS_BIAS: the pins are met4 at the caps' y -- a met4 run would short the
@@ -145,19 +201,64 @@ def diff_buffer(pdk: MappedPDK, gap: float = 10.0) -> Component:
     _lowvias = []
     for ref_ in (pref, nref):
         _pin = ref_.ports["pin_commonsourceibias_S"]
-        _d = _pin.copy(); _d.center = (_pin.center[0], _y_low)
+        _d = _pin.copy()
+        _d.center = (_pin.center[0], _y_low)
         top << straight_route(pdk, _pin, _d, glayer1="met4", glayer2="met4", width=1)
         _lv = top << via_stack(pdk, "met3", "met4")
         _lv.movex(_pin.center[0] - _lv.center[0]).movey(_y_low + 0.4 - _lv.center[1])
         _lowvias.append(_lv)
     _ha = _lowvias[0].ports["bottom_met_E"].copy()
-    _hb = _ha.copy(); _hb.center = (_lowvias[1].center[0], _ha.center[1])
+    _hb = _ha.copy()
+    _hb.center = (_lowvias[1].center[0], _ha.center[1])
     top << straight_route(pdk, _ha, _hb, glayer1="met3", glayer2="met3", width=1)
     routed += ["VCS_BIAS"]
 
+    # (7) VINN egress. nref's plus input lands at nref's WEST edge -- i.e. the MIDDLE of
+    # the buffer (in the inter-opamp gap) -- so a left-side consumer (the delay stage
+    # drives BOTH inputs from the west) can't reach VINN without the router plowing
+    # across the top through VINP, shorting the two held nodes. Bring VINN out to the
+    # buffer's SW corner on met2 (free in the gap and below the cells): met3 west into
+    # the gap, drop to met2, DOWN the clear gap column, then WEST below both opamps to a
+    # low pin at the left edge -- well clear of VINP (west edge, y~22) so the two stage
+    # inputs present at separated heights and route without collision.
+    _vinn_src = nref.ports["pin_plus_W"]  # met3, faces W, at nref's west edge
+    _gap_x = (pref.xmax + nref.xmin) / 2.0  # centre of the inter-opamp gap
+    _vinn_v = top << via_stack(pdk, "met2", "met3")
+    _vinn_v.movex(_gap_x - _vinn_v.center[0]).movey(
+        _vinn_src.center[1] - _vinn_v.center[1]
+    )
+    top << straight_route(
+        pdk,
+        _vinn_src,
+        _vinn_v.ports["top_met_E"],
+        glayer1="met3",
+        glayer2="met3",
+        width=1,
+    )
+    _y_bot = min(pref.ymin, nref.ymin) - 4.0
+    _down_a = _vinn_v.ports["bottom_met_S"]
+    _down_b = _down_a.copy()
+    _down_b.center = (_gap_x, _y_bot)
+    _down_b.orientation = 90
+    top << straight_route(
+        pdk, _down_a, _down_b, glayer1="met2", glayer2="met2", width=1
+    )
+    _x_edge = pref.xmin
+    _west_a = _down_b.copy()
+    _west_a.orientation = 180
+    _west_b = _down_b.copy()
+    _west_b.center = (_x_edge, _y_bot)
+    _west_b.orientation = 0
+    top << straight_route(
+        pdk, _west_a, _west_b, glayer1="met2", glayer2="met2", width=1
+    )
+    routed += ["VINN_egress"]
+    _vinn_pin = _west_b.copy()
+    _vinn_pin.orientation = 180  # W-facing input pin at the edge
+
     # expose clean-named buffer pins (composable + labelable for LVS)
     top.add_port(name="VINP", port=pref.ports["pin_plus_W"])
-    top.add_port(name="VINN", port=nref.ports["pin_plus_E"])
+    top.add_port(name="VINN", port=_vinn_pin)
     top.add_port(name="VOUTP", port=pref.ports["commonsource_output_E"])
     top.add_port(name="VOUTN", port=nref.ports["commonsource_output_E"])
     top.add_port(name="VDP_BIAS", port=pref.ports["pin_diffpairibias_W"])
@@ -174,8 +275,11 @@ def diff_buffer(pdk: MappedPDK, gap: float = 10.0) -> Component:
 
 if __name__ == "__main__":
     from glayout.flow.pdk.gf180_mapped.gf180_mapped import gf180_mapped_pdk
+
     c = diff_buffer(gf180_mapped_pdk)
     c.write_gds("diff_buffer.gds")
-    open("diff_buffer.spice", "w").write(units_fix(c.info["netlist"].generate_netlist()))
+    open("diff_buffer.spice", "w").write(
+        units_fix(c.info["netlist"].generate_netlist())
+    )
     print("GDS:", c.name, "bbox=", c.bbox)
     print("routed:", c.info.get("routed"), "FAILED:", c.info.get("route_failed"))
