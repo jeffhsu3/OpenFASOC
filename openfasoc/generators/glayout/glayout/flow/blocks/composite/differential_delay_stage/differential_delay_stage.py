@@ -139,8 +139,6 @@ def differential_delay_stage(pdk: MappedPDK, gap: float = 12.0) -> Component:
         _v = top << _via_stack(pdk, l1, l2)
         _v.movex(round(x, 3) - _v.center[0]).movey(round(y, 3) - _v.center[1])
 
-    xw = min(shp.xmin, shn.xmin)
-
     # Route VSS
     _pt, _pb = shp.ports["VSS"], shn.ports["VSS"]
 
@@ -156,18 +154,36 @@ def differential_delay_stage(pdk: MappedPDK, gap: float = 12.0) -> Component:
 
     x_east_tie_vss = _pt.center[0] + tie_offset_vss
     _yrail = bref.ports["VSS"].center[1]
+    # south stub: continue the column to the macro's bottom edge so the VSS
+    # pin sits at the boundary (promoted-leaf pins must be edge-reachable
+    # under the full-area OBS). The corridor x~11.1, y<-15 is open: south of
+    # shn (ymin ~-15.0), west of the buffer (xmin 17.79).
+    _ybot = min(shn.ymin, bref.ymin) + 0.1
 
-    # Vias at North and South East tiesThere is no label or annotation for the teast tie? I'm not sure . k ef
+    # Vias at the North and South east ring segments (the tie rings are
+    # met1-only, so the met2 column crosses them freely elsewhere)
     _viaat(x_east_tie_vss, _pt.center[1], "met1", "met2")
     _viaat(x_east_tie_vss, _pb.center[1], "met1", "met2")
 
-    # Straight met2 down to buffer yrail
+    # Straight met2 column down to the buffer yrail, up to the upper S/H N-tie
     _rect(
         x_east_tie_vss - W2 / 2,
         _yrail - W2 / 2,
         x_east_tie_vss + W2 / 2,
         _pt.center[1] + W2 / 2,
         "met2",
+    )
+    # south boundary stub on MET3: the HOLDN smart_route lands on a met2
+    # strip along the bottom (y~-26.6) into the buffer VINN pin, which a met2
+    # stub would short; hop to met3 at the rail and cross it layer-clear
+    # (the HOLDN met3 riser is at x~7.5, 3.4 um west)
+    _viaat(x_east_tie_vss, _yrail, "met2", "met3")
+    _rect(
+        x_east_tie_vss - W2 / 2,
+        _ybot,
+        x_east_tie_vss + W2 / 2,
+        _yrail + 0.25,
+        "met3",
     )
 
     # Horizontal connection to buffer VSS
@@ -181,57 +197,99 @@ def differential_delay_stage(pdk: MappedPDK, gap: float = 12.0) -> Component:
     _viaat(bref.ports["VSS"].center[0] + 1.0, _yrail, "met2", "met4")
     routed += ["VSS_sh", "VSS_buf"]
 
-    # Route CLK and CLK_B
-    for net in ["CLK", "CLK_B"]:
-        _pt, _pb = shp.ports[net], shn.ports[net]
-        _viaat(_pt.center[0], _pt.center[1], "met2", "met3")
-        _viaat(_pb.center[0], _pb.center[1], "met2", "met3")
-        _rect(
-            _pt.center[0] - W2 / 2,
-            _pb.center[1] - W2 / 2,
-            _pt.center[0] + W2 / 2,
-            _pt.center[1] + W2 / 2,
-            "met3",
-        )
-        routed.append(net)
-
     # Route VCC
     _pt, _pb = shp.ports["VCC"], shn.ports["VCC"]
     tie_offset = 4.93  # This can't be an absolute number
     # There is nothing here that we could imporve
 
+    tie_bottom_off = -4.93  # fallback: y from VCC port down to the tie-ring bottom
     for ref in sh_comp.references:
         if "transmission_gate" in ref.parent.name:
             tie_offset = abs(
                 ref.ports["P_tie_W_top_met_S"].center[0]
                 - sh_comp.ports["VCC"].center[0]
             )
+            # bottom of the PMOS tie ring: P_tie_N is the (pfet-mirrored) bottom segment.
+            # Its E/W ports sit at the segment centre (the mirrored cell drops the _N
+            # edge port); use that as a cell-frame y-offset from the VCC port.
+            tie_bottom_off = (
+                ref.ports["P_tie_N_top_met_E"].center[1]
+                - sh_comp.ports["VCC"].center[1]
+            )
             break
 
     # Lift VCC on the WEST tie (nearer the west VCC exit). tie_offset is measured from
-    # P_tie_W, so subtracting it lands directly on the west tie (no east mirror).
+    # P_tie_W, so subtracting it lands directly on the west tie (no east mirror). The
+    # column's TOP end connects at the BOTTOM of the top S/H's PMOS tie ring (not the VCC
+    # port at the cell top) -- the ring is continuous met1, so the bar can stop there.
     x_west_tie = _pt.center[0] - tie_offset
-    _viaat(x_west_tie, _pt.center[1], "met1", "met2")
+    y_top = _pt.center[1] + tie_bottom_off
+    _viaat(x_west_tie, y_top, "met1", "met2")
     _viaat(x_west_tie, _pb.center[1], "met1", "met2")
     _rect(
         x_west_tie - W2 / 2,
         _pb.center[1] - W2 / 2,
         x_west_tie + W2 / 2,
-        _pt.center[1] + W2 / 2,
+        y_top + W2 / 2,
         "met2",
     )
+    vcc_pin_y = (_pb.center[1] + y_top) / 2  # centre of the (now shorter) west-tie bar
 
-    # VCC port flush with transmission gate boundary (xw)
-    xc_vcc = xw
-    _ytop = shp.ymax + 1.1
-    _rect(
-        _pt.center[0] - W2 / 2,
-        _pt.center[1] - 0.2,
-        _pt.center[0] + W2 / 2,
-        _ytop + W2 / 2,
-    )
-    _rect(xc_vcc - W2 / 2, _ytop - W2 / 2, _pt.center[0] + W2 / 2, _ytop + W2 / 2)
-    routed.append("VCC_sh")
+    # Route CLK and CLK_B: WEST-FLANK met3 columns + met2 stubs from the port
+    # pads (ported from the measured east-tie-FIXED variant). Columns at the
+    # bare port x's sat 0.8/1.7 um from the TG/VIN structures -- close AND
+    # asymmetric, so the complementary CLK/CLK_B coupling no longer cancelled
+    # (50.2 mV p-p output feedthrough, 30.8 mV signal-dependent pedestal ->
+    # ~55 mV/hop offsets in the 8-stage line). On the flank they are ~5 um
+    # out and near-equidistant (measured 8.6 mV p-p). met2 stubs crossing the
+    # other net's met3 column are layer-clear by construction. A stub whose y
+    # falls within the VCC west-tie met2 bar's span (the shp CLK stub) hops
+    # the bar on MET3, dropping to met2 east of it -- a met2 run there is a
+    # CLK-VCC short, and met1 is blocked by the VSS ring rails at that y.
+    _bar_ylo = min(_pb.center[1], y_top) - W2 / 2 - 0.3
+    _bar_yhi = max(_pb.center[1], y_top) + W2 / 2 + 0.3
+    xw = min(shp.xmin, shn.xmin)
+    x_clk_col = xw - 0.8
+    x_ckb_col = xw - 1.6
+    for net, _xcol in (("CLK", x_clk_col), ("CLK_B", x_ckb_col)):
+        _pt, _pb = shp.ports[net], shn.ports[net]
+        for _p in (_pt, _pb):
+            _y = _p.center[1]
+            if _bar_ylo < _y < _bar_yhi:
+                # met3 over the VCC bar (merges with the column), via down
+                # east of the bar, met2 into the port pad
+                _rect(
+                    _xcol - W2 / 2,
+                    _y - W2 / 2,
+                    x_west_tie + 1.0,
+                    _y + W2 / 2,
+                    "met3",
+                )
+                _viaat(x_west_tie + 0.85, _y, "met2", "met3")
+                _rect(
+                    x_west_tie + 0.6,
+                    _y - W2 / 2,
+                    _p.center[0] + 0.3,
+                    _y + W2 / 2,
+                    "met2",
+                )
+            else:
+                _rect(
+                    _xcol - W2 / 2,
+                    _y - W2 / 2,
+                    _p.center[0] + 0.3,
+                    _y + W2 / 2,
+                    "met2",
+                )
+                _viaat(_xcol, _y, "met2", "met3")
+        _rect(
+            _xcol - W2 / 2,
+            _pb.center[1] - W2 / 2,
+            _xcol + W2 / 2,
+            _pt.center[1] + W2 / 2,
+            "met3",
+        )
+        routed.append(net)
 
     # expose stage pins WITH GDS labels (so magic `port makeall` -> LEF PINs, and LVS
     # has named ports). Mirrors the coeff_cap/sample_hold_cell expose() pattern.
@@ -330,8 +388,6 @@ def differential_delay_stage(pdk: MappedPDK, gap: float = 12.0) -> Component:
     expose_west("VINP", shp.ports["VIN"])
     expose_west("VINN", shn.ports["VIN"])
 
-    # CLK/CLK_B/VSS/VCC pins sit directly ON the new west-flank met2 columns --
-    # top-level geometry on the nets themselves, at the left macro edge.
     def expose_col(name, x, y):
         _p = gf.Port(
             name=name,
@@ -358,25 +414,30 @@ def differential_delay_stage(pdk: MappedPDK, gap: float = 12.0) -> Component:
             text=name, position=(float(x), float(y)), layer=pdk.get_glayer("met3")
         )
 
-    expose_met3("CLK", shp.ports["CLK"].center[0], shp.ports["CLK"].center[1])
-    expose_met3("CLK_B", shp.ports["CLK_B"].center[0], shp.ports["CLK_B"].center[1])
-    expose_col("VCC", xc_vcc, shp.ymax + 1.1)
+    # CLK / CLK_B pins sit directly ON the west-flank met3 columns -- top-level
+    # geometry on the nets themselves, at the (new) left macro edge. Labels at
+    # the shp-port y are 0.25 um inside the column top (magic port makeall
+    # drops exactly-on-edge labels).
+    expose_met3("CLK", x_clk_col, shp.ports["CLK"].center[1])
+    expose_met3("CLK_B", x_ckb_col, shp.ports["CLK_B"].center[1])
+    # VCC pin centered on the west-tie met2 bar -- lands directly on that bar's metal.
+    expose_col("VCC", x_west_tie, vcc_pin_y)
 
-    # Expose VSS on the met2 vertical route facing South
+    # Expose VSS at the SOUTH end of the met3 boundary stub
     def expose_vss(name, x, y):
         _p = gf.Port(
             name=name,
             center=(float(x), float(y)),
             width=W2,
             orientation=270,
-            layer=pdk.get_glayer("met2"),
+            layer=pdk.get_glayer("met3"),
         )
         top.add_port(name=name, port=_p)
         top.add_label(
-            text=name, position=(float(x), float(y)), layer=pdk.get_glayer("met2")
+            text=name, position=(float(x), float(y)), layer=pdk.get_glayer("met3")
         )
 
-    expose_vss("VSS", x_east_tie_vss, _yrail)
+    expose_vss("VSS", x_east_tie_vss, _ybot + 0.25)
 
     expose_up(
         "VOUTP", bref.ports["VOUTP"]
@@ -410,7 +471,15 @@ def differential_delay_stage(pdk: MappedPDK, gap: float = 12.0) -> Component:
         layer=pdk.get_glayer("met2"),
     )
     expose_up("VDD", bref.ports["VDD"])  # interior supply -> route up to top edge
-    expose("VDP_BIAS", bref.ports["VDP_BIAS"])  # already at the bottom edge
+    # VDP_BIAS south boundary stub: the buffer pin pad (met3) sits 6 um inside
+    # the south edge, past the promote_leaf trim margin. The only shape below
+    # it is the buffer's HOLDN met2 strip along y~-26.6, crossed layer-clear
+    # on met3 -- straight met3 rect from the pad to the boundary, pin at the
+    # south end (port center = the pad's WEST edge, so nudge east into it)
+    _vdp = bref.ports["VDP_BIAS"]
+    _xvdp = _vdp.center[0] + 0.25
+    _rect(_xvdp - W2 / 2, _ybot, _xvdp + W2 / 2, _vdp.center[1], "met3")
+    expose_vss("VDP_BIAS", _xvdp, _ybot + 0.25)
 
     # component_snap_to_grid strips the S/H instances' flattened-in internal
     # labels generically (labels are cell-local; duplicate texts on different
