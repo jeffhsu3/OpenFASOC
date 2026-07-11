@@ -15,12 +15,13 @@ rail-agnostic and one body is reused for every tap of the same magnitude.
 Coefficient -> layout: magnitude n=|coeff| -> mimcap_array(rows=1, columns=n); each
 unit is the DRC-min 5x5um=25um^2=50fF MIM (gf180 MIM.8a). Sign is handled by fir_mac.
 """
-import numpy as np
 
 from gdsfactory.cell import cell
 from gdsfactory.component import Component
 from glayout.flow.pdk.mappedpdk import MappedPDK
-from glayout.flow.blocks.elementary.transmission_gate.transmission_gate import transmission_gate
+from glayout.flow.blocks.elementary.transmission_gate.transmission_gate import (
+    transmission_gate,
+)
 from glayout.flow.primitives.fet import nmos
 from glayout.flow.primitives.mimcap import mimcap_array
 from glayout.flow.primitives.via_gen import via_stack
@@ -28,6 +29,7 @@ from glayout.flow.routing.L_route import L_route
 from glayout.flow.routing.straight_route import straight_route
 from glayout.flow.pdk.util.comp_utils import evaluate_bbox
 from glayout.flow.spice.netlist import Netlist
+from glayout.flow.pdk.util.label_utils import expose_ports
 
 
 def _coeff_cap_netlist(
@@ -62,7 +64,7 @@ def _coeff_cap_netlist(
         mim_comp.info["netlist"],
         [
             ("V1", "SAMPLE"),  # top plate = per-tap floating sample node
-            ("V2", "SUM"),     # bottom plate = shared summing rail
+            ("V2", "SUM"),  # bottom plate = shared summing rail
         ],
     )
 
@@ -94,7 +96,9 @@ def coeff_cap(
     """One fixed-coefficient FIR tap (weight = |coefficient| unit MIM caps)."""
     n = abs(int(coefficient))
     if n < 1:
-        raise ValueError("coefficient magnitude must be >= 1 (a zero tap is omitted at fir_mac level)")
+        raise ValueError(
+            "coefficient magnitude must be >= 1 (a zero tap is omitted at fir_mac level)"
+        )
 
     top_level = Component(name=f"coeff_cap_{coefficient}")
     SEP_MULT = 1
@@ -113,7 +117,11 @@ def coeff_cap(
     # cap of n*unit). One array per tap; never mix coefficients in one array.
     mim_comp = mimcap_array(pdk=pdk, rows=1, columns=n, size=unit_cap_size)
     mim_ref = top_level << mim_comp
-    mim_ref.movex(tg_ref.xmin - evaluate_bbox(mim_ref)[0] - pdk.util_max_metal_seperation() * SEP_MULT)
+    mim_ref.movex(
+        tg_ref.xmin
+        - evaluate_bbox(mim_ref)[0]
+        - pdk.util_max_metal_seperation() * SEP_MULT
+    )
     mim_ref.movey(tg_ref.center[1] - mim_ref.center[1])
 
     rst_comp = None
@@ -147,22 +155,34 @@ def coeff_cap(
 
     # Plate glayers derived from the cap (gf180: top=met5, bottom=met4).
     mim_top_layer = pdk.layer_to_glayer(mim_ref.ports["row0_col0_top_met_E"].layer)
-    mim_bottom_layer = pdk.layer_to_glayer(mim_ref.ports["row0_col0_bottom_met_E"].layer)
+    mim_bottom_layer = pdk.layer_to_glayer(
+        mim_ref.ports["row0_col0_bottom_met_E"].layer
+    )
     ROUTING_SEP = 1.1
 
     # ----- TOP plate (V1 = SAMPLE node) -- proven sample_hold staircase --------
     # Reset NMOS drain -> top plate (dump-to-VZERO switch).
     if with_reset:
         rst_drain_port = rst_ref.ports["multiplier_0_drain_E"].copy()
-        rst_drain_port.center = (rst_drain_port.center[0] - 0.1, rst_drain_port.center[1])
+        rst_drain_port.center = (
+            rst_drain_port.center[0] - 0.1,
+            rst_drain_port.center[1],
+        )
         rst_via1 = drop_via("met2", "met3", rst_drain_port)
         rst_port = rst_via1.ports["top_met_E"].copy()
         rst_port.center = (rst_port.center[0] + ROUTING_SEP, rst_port.center[1])
-        top_level << straight_route(pdk, rst_via1.ports["top_met_E"], rst_port, glayer1="met3", glayer2="met3")
+        top_level << straight_route(
+            pdk, rst_via1.ports["top_met_E"], rst_port, glayer1="met3", glayer2="met3"
+        )
         rst_via = drop_via("met3", mim_top_layer, rst_port)
         top_level << L_route(
-            pdk, rst_via.ports["top_met_N"], mim_ref.ports["row0_col0_top_met_W"],
-            hglayer=mim_top_layer, vglayer=mim_top_layer, vwidth=1.0, hwidth=1.0,
+            pdk,
+            rst_via.ports["top_met_N"],
+            mim_ref.ports["row0_col0_top_met_W"],
+            hglayer=mim_top_layer,
+            vglayer=mim_top_layer,
+            vwidth=1.0,
+            hwidth=1.0,
         )
 
     # TG drain (sampling switch output) -> top plate.
@@ -171,11 +191,22 @@ def coeff_cap(
     tg_vout_via1 = drop_via("met2", "met3", tg_vout_port)
     tg_vout_port2 = tg_vout_via1.ports["top_met_W"].copy()
     tg_vout_port2.center = (tg_vout_port2.center[0] - 1.1, tg_vout_port2.center[1])
-    top_level << straight_route(pdk, tg_vout_via1.ports["top_met_W"], tg_vout_port2, glayer1="met3", glayer2="met3")
+    top_level << straight_route(
+        pdk,
+        tg_vout_via1.ports["top_met_W"],
+        tg_vout_port2,
+        glayer1="met3",
+        glayer2="met3",
+    )
     tg_vout_via = drop_via("met3", mim_top_layer, tg_vout_port2)
     top_level << L_route(
-        pdk, tg_vout_via.ports["top_met_N"], mim_ref.ports["row0_col0_top_met_E"],
-        hglayer=mim_top_layer, vglayer=mim_top_layer, vwidth=1.0, hwidth=1.0,
+        pdk,
+        tg_vout_via.ports["top_met_N"],
+        mim_ref.ports["row0_col0_top_met_E"],
+        hglayer=mim_top_layer,
+        vglayer=mim_top_layer,
+        vwidth=1.0,
+        hwidth=1.0,
     )
 
     # ----- BOTTOM plate (V2 = SUM rail tap) ------------------------------------
@@ -189,35 +220,32 @@ def coeff_cap(
     se_port = mim_ref.ports["row0_col0_bottom_met_E"].copy()
     se_port.center = (mim_ref.xmax, mim_ref.ymin)
     top_level << L_route(
-        pdk, sum_via.ports["top_met_S"], se_port,
-        hglayer=mim_bottom_layer, vglayer=mim_bottom_layer,
+        pdk,
+        sum_via.ports["top_met_S"],
+        se_port,
+        hglayer=mim_bottom_layer,
+        vglayer=mim_bottom_layer,
     )
 
     # ----- Expose ports (labels nudged inside the polygon for magic) -----------
-    def expose(name: str, port, glayer: str | None = None):
-        top_level.add_port(name=name, port=port)
-        if glayer is None:
-            glayer = pdk.layer_to_glayer(port.layer)
-        angle = port.orientation
-        if angle is not None:
-            dx = -0.1 * np.cos(np.radians(angle))
-            dy = -0.1 * np.sin(np.radians(angle))
-        else:
-            dx, dy = 0, 0
-        pos = (port.center[0] + dx, port.center[1] + dy)
-        top_level.add_label(text=name, position=pos, layer=pdk.get_glayer(glayer))
-
-    expose("VIN", tg_ref.ports["P_multiplier_0_source_E"])
-    expose("CLK", tg_ref.ports["N_multiplier_0_gate_E"])
-    expose("CLK_B", tg_ref.ports["P_multiplier_0_gate_E"])
-    expose("VCC", tg_ref.ports["P_tie_S_top_met_S"])
-    expose("VSS", tg_ref.ports["N_tie_S_top_met_N"])
-    expose("SAMPLE", mim_ref.ports["row0_col0_top_met_W"])  # label/probe (floating sample node)
-    expose("SUM", sum_via.ports["bottom_met_S"])            # ROUTABLE met2 rail tap
-
+    port_labels = [
+        ("VIN", tg_ref.ports["P_multiplier_0_source_E"]),
+        ("CLK", tg_ref.ports["N_multiplier_0_gate_E"]),
+        ("CLK_B", tg_ref.ports["P_multiplier_0_gate_E"]),
+        ("VCC", tg_ref.ports["P_tie_S_top_met_S"]),
+        ("VSS", tg_ref.ports["N_tie_S_top_met_N"]),
+        (
+            "SAMPLE",
+            mim_ref.ports["row0_col0_top_met_W"],
+        ),  # label/probe (floating sample node)
+        ("SUM", sum_via.ports["bottom_met_S"]),  # ROUTABLE met2 rail tap
+    ]
     if with_reset:
-        expose("RESET", rst_ref.ports["multiplier_0_gate_W"])
-        expose("VZERO", rst_ref.ports["multiplier_0_source_W"])
+        port_labels += [
+            ("RESET", rst_ref.ports["multiplier_0_gate_W"]),
+            ("VZERO", rst_ref.ports["multiplier_0_source_W"]),
+        ]
+    expose_ports(top_level, pdk, port_labels)
 
     top_level.info["netlist"] = _coeff_cap_netlist(tg_comp, mim_comp, rst_comp)
     return top_level
@@ -226,6 +254,7 @@ def coeff_cap(
 if __name__ == "__main__":
     from glayout.flow.pdk.gf180_mapped.gf180_mapped import gf180_mapped_pdk
     import sys
+
     coeff = int(sys.argv[1]) if len(sys.argv) > 1 else 2
     print(f"Generating coeff_cap(coefficient={coeff})...")
     comp = coeff_cap(gf180_mapped_pdk, coefficient=coeff)
